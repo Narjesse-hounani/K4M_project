@@ -1,0 +1,356 @@
+---
+title: "DA DNA Methylation"
+output: html_document
+date: "2026-01-26"
+---
+
+```{r setup, include=FALSE}
+library(data.table)
+library(DiffBind)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ChIPseeker)
+library(org.Mm.eg.db)
+library(stringr)
+library(ggplot2)
+```
+
+
+```{r cars}
+#setwd("/Users/maxim/Documents/Diffbind_result")
+```
+
+## WT D0 H3 vs TKO D0 H3 
+
+```{r pressure, echo=FALSE}
+#setwd("/shared/home/hounani/DiffBind_result")
+df_D0_WT_H3_vs_D0_TKO_H3<-readRDS("DiffBind_D0_WT_H3_vs_D0_TKO_H3.rds")
+table_D0_WT_H3_vs_D0_TKO_H3<-read.table("DiffBind_D0_WT_H3_vs_D0_TKO_H3.tsv",header = TRUE)
+dba.show(df_D0_WT_H3_vs_D0_TKO_H3, bContrasts = TRUE)
+df_D0_WT_H3_vs_D0_TKO_H3
+
+```
+peaks : 97096
+```{r}
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3 <- dba.report(df_D0_WT_H3_vs_D0_TKO_H3, th = 0.05, contrast = 1)
+length(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+head(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3 <- as.data.frame(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+
+```
+
+```{r}
+class(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3 <- GenomicRanges::makeGRangesFromDataFrame(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+```
+
+```{r}
+# annotate the peak
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3 <- annotatePeak(diff_peaks_D0_WT_H3_vs_D0_TKO_H3,
+                          TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene,  
+                          annoDb = "org.Mm.eg.db",                     
+                          tssRegion = c(-3000, 3000),                  
+                          verbose = FALSE)
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3 <- as.data.frame(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+head(diff_peaks_D0_WT_H3_vs_D0_TKO_H3)
+
+```
+
+```{r}
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3$annotation<- str_replace(diff_peaks_D0_WT_H3_vs_D0_TKO_H3$annotation, " \\s*\\([^\\)]+\\)", "")
+table(diff_peaks_D0_WT_H3_vs_D0_TKO_H3$annotation)
+
+```
+
+```{r}
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3$Fold<- table_D0_WT_H3_vs_D0_TKO_H3$Fold
+diff_peaks_D0_WT_H3_vs_D0_TKO_H3$FDR<- table_D0_WT_H3_vs_D0_TKO_H3$FDR
+
+```
+
+```{r}
+pdf("Volcanoplot_ATAC/volcano_D0_WT_H3_vs_D0_TKO_H3.pdf", width = 8, height = 6)
+dba.plotVolcano(df_D0_WT_H3_vs_D0_TKO_H3, contrast = 1, bFlip = TRUE)
+dev.off()
+```
+
+
+```{r}
+p
+```
+
+
+
+
+```{r}
+dba.plotMA(df_D0_WT_H3_vs_D0_TKO_H3, contrast = 1, bFlip = TRUE )
+
+```
+```{r}
+ggplot(diff_peaks_D0_WT_H3_vs_D0_TKO_H3, aes(x = annotation, y = Fold*-1))+
+  geom_boxplot()
+```
+```{r}
+D0_WT_H3_enrich <- diff_peaks_D0_WT_H3_vs_D0_TKO_H3 %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end)
+# Write to file
+write.table(D0_WT_H3_enrich, file="bed_files/D0_WT_H3_enriched_D0_WT_H3_vs_D0_TKO_H3.bed", sep="\t", quote=F, row.names=F, col.names=F)
+
+D0_TKO_H3_enrich <- diff_peaks_D0_WT_H3_vs_D0_TKO_H3 %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end)
+
+# Write to file
+write.table(D0_TKO_H3_enrich, file="bed_files/D0_TKO_H3_enriched_D0_WT_H3_vs_D0_TKO_H3.bed", sep="\t", quote=F, row.names=F, col.names=F)
+```
+
+
+```{r}
+cat("number of D0_WT_H3_ enriched peaks :", nrow(D0_WT_H3_enrich),"\n")
+cat("number of D0_TKO_H3 enriched peaks :", nrow(D0_TKO_H3_enrich))
+
+```
+
+## WT D0 K4M vs TKO D0 K4M 
+```{r}
+#setwd("/shared/home/hounani/DiffBind_result")
+df_D0_WT_K4M_vs_D0_TKO_K4M<-readRDS("DiffBind_D0_WT_K4M_vs_D0_TKO_K4M.rds")
+table_D0_WT_K4M_vs_D0_TKO_K4M<-read.table("DiffBind_D0_WT_K4M_vs_D0_TKO_K4M.tsv",header = TRUE)
+dba.show(df_D0_WT_K4M_vs_D0_TKO_K4M, bContrasts = TRUE)
+```
+
+```{r}
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M <- dba.report(df_D0_WT_K4M_vs_D0_TKO_K4M, th = 0.05, contrast = 1)
+length(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+head(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M <- as.data.frame(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+
+```
+
+```{r}
+class(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M <- GenomicRanges::makeGRangesFromDataFrame(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+
+```
+```{r}
+# annotate the peak
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M <- annotatePeak(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M,
+                          TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene,  
+                          annoDb = "org.Mm.eg.db",                     
+                          tssRegion = c(-3000, 3000),                  
+                          verbose = FALSE)
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M <- as.data.frame(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+head(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M)
+```
+
+```{r}
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M$annotation<- str_replace(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M$annotation, " \\s*\\([^\\)]+\\)", "")
+table(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M$annotation)
+
+
+```
+
+```{r}
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M$Fold<- table_D0_WT_K4M_vs_D0_TKO_K4M$Fold
+diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M$FDR<- table_D0_WT_K4M_vs_D0_TKO_K4M$FDR
+
+```
+
+```{r}
+pdf("Volcanoplot_ATAC/volcano_D0_WT_K4M_vs_D0_TKO_K4M.pdf", width = 8, height = 6)
+dba.plotVolcano(df_D0_WT_K4M_vs_D0_TKO_K4M, contrast = 1, bFlip = TRUE)
+dev.off()
+```
+
+```{r}
+dba.plotMA(df_D0_WT_K4M_vs_D0_TKO_K4M, contrast = 1, bFlip = TRUE)
+
+```
+
+```{r}
+ggplot(diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M, aes(x = annotation, y = Fold*-1))+
+  geom_boxplot()
+```
+```{r}
+D0_WT_K4M_enrich <- diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end)
+# Write to file
+write.table(D0_WT_K4M_enrich, file="bed_files/D0_WT_K4M_enriched_D0_WT_K4M_vs_D0_TKO_K4M.bed", sep="\t", quote=F, row.names=F, col.names=F)
+
+D0_TKO_K4M_enrich <- diff_peaks_D0_WT_K4M_vs_D0_TKO_K4M %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end)
+
+# Write to file
+write.table(D0_TKO_K4M_enrich, file="bed_files/D0_TKO_K4M_enriched_D0_WT_K4M_vs_D0_TKO_K4M.bed", sep="\t", quote=F, row.names=F, col.names=F)
+```
+
+
+```{r}
+cat("number of D0_WT_K4M enriched peaks :", nrow(D0_WT_K4M_enrich),"\n")
+cat("number of D0_TKO_K4M enriched peaks :", nrow(D0_TKO_K4M_enrich))
+
+```
+
+
+## WT D2 H3 vs TKO D2 H3
+```{r}
+#setwd("/shared/home/hounani/DiffBind_result")
+df_D2_WT_H3_vs_D2_TKO_H3<-readRDS("DiffBind_D2_WT_H3_vs_D2_TKO_H3.rds")
+table_D2_WT_H3_vs_D2_TKO_H3<-read.table("DiffBind_D2_WT_H3_vs_D2_TKO_H3.tsv",header = TRUE)
+dba.show(df_D2_WT_H3_vs_D2_TKO_H3, bContrasts = TRUE)
+df_D2_WT_H3_vs_D2_TKO_H3
+
+```
+```{r}
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3 <- dba.report(df_D2_WT_H3_vs_D2_TKO_H3, th = 0.05, contrast = 1)
+length(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+head(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3 <- as.data.frame(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+
+```
+
+```{r}
+class(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3 <- GenomicRanges::makeGRangesFromDataFrame(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+```
+```{r}
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3 <- annotatePeak(diff_peaks_D2_WT_H3_vs_D2_TKO_H3,
+                          TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene,  
+                          annoDb = "org.Mm.eg.db",                     
+                          tssRegion = c(-3000, 3000),                  
+                          verbose = FALSE)
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3 <- as.data.frame(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+head(diff_peaks_D2_WT_H3_vs_D2_TKO_H3)
+```
+```{r}
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3$annotation<- str_replace(diff_peaks_D2_WT_H3_vs_D2_TKO_H3$annotation, " \\s*\\([^\\)]+\\)", "")
+table(diff_peaks_D2_WT_H3_vs_D2_TKO_H3$annotation)
+
+```
+
+```{r}
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3$Fold <- table_D2_WT_H3_vs_D2_TKO_H3$Fold
+diff_peaks_D2_WT_H3_vs_D2_TKO_H3$FDR <- table_D2_WT_H3_vs_D2_TKO_H3$FDR
+```
+
+```{r}
+pdf("Volcanoplot_ATAC/volcano_D2_WT_H3_vs_D2_TKO_H3.pdf", width = 8, height = 6)
+dba.plotVolcano(df_D2_WT_H3_vs_D2_TKO_H3, contrast=1, bFlip = TRUE) 
+dev.off()
+
+```
+```{r}
+dba.plotMA(df_D2_WT_H3_vs_D2_TKO_H3, contrast = 1, bFlip = TRUE)
+
+```
+
+```{r}
+ggplot(diff_peaks_D2_WT_H3_vs_D2_TKO_H3, aes(x = annotation, y = Fold*-1))+
+  geom_boxplot()
+
+```
+```{r}
+D2_WT_H3_enrich <- diff_peaks_D2_WT_H3_vs_D2_TKO_H3 %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end)
+# Write to file
+write.table(D2_WT_H3_enrich, file="bed_files/D2_WT_H3_enriched_D2_WT_H3_vs_D2_TKO_H3.bed", sep="\t", quote=F, row.names=F, col.names=F)
+
+D2_TKO_H3_enrich <- diff_peaks_D2_WT_H3_vs_D2_TKO_H3 %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end)
+
+# Write to file
+write.table(D2_TKO_H3_enrich, file="bed_files/D2_TKO_H3_enriched_D2_WT_H3_vs_D2_TKO_H3.bed", sep="\t", quote=F, row.names=F, col.names=F)
+```
+
+
+```{r}
+cat("number of D2_WT_H3 enriched peaks :", nrow(D2_WT_H3_enrich),"\n")
+cat("number of D2_TKO_H3 enriched peaks :", nrow(D2_TKO_H3_enrich))
+
+```
+
+## WT D2 K4M vs TKO D2 K4M
+```{r}
+df_D2_WT_K4M_vs_D2_TKO_K4M<-readRDS("DiffBind_D2_WT_K4M_vs_D2_TKO_K4M.rds")
+table_D2_WT_K4M_vs_D2_TKO_K4M<-read.table("DiffBind_D2_WT_K4M_vs_D2_TKO_K4M.tsv",header = TRUE)
+dba.show(df_D2_WT_K4M_vs_D2_TKO_K4M, bContrasts = TRUE)
+```
+
+```{r}
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M <- dba.report(df_D2_WT_K4M_vs_D2_TKO_K4M, th = 0.05, contrast = 1)
+length(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+head(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M <- as.data.frame(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+
+```
+```{r}
+class(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M <- GenomicRanges::makeGRangesFromDataFrame(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+
+```
+
+```{r}
+# annotate the peak
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M <- annotatePeak(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M,
+                          TxDb = TxDb.Mmusculus.UCSC.mm10.knownGene,  
+                          annoDb = "org.Mm.eg.db",                     
+                          tssRegion = c(-3000, 3000),                  
+                          verbose = FALSE)
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M <- as.data.frame(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+head(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M)
+```
+
+```{r}
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M$annotation<- str_replace(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M$annotation, " \\s*\\([^\\)]+\\)", "")
+table(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M$annotation)
+
+```
+
+```{r}
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M$Fold<- table_D2_WT_K4M_vs_D2_TKO_K4M$Fold
+diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M$FDR<- table_D2_WT_K4M_vs_D2_TKO_K4M$FDR
+
+```
+
+```{r}
+pdf("Volcanoplot_ATAC/volcano_D2_WT_K4M_vs_D2_TKO_K4M.pdf", width = 8, height = 6)
+dba.plotVolcano(df_D2_WT_K4M_vs_D2_TKO_K4M, contrast=1, bFlip = TRUE) 
+dev.off()
+
+```
+
+```{r}
+dba.plotMA(df_D2_WT_K4M_vs_D2_TKO_K4M, contrast = 1, bFlip = TRUE)
+
+```
+```{r}
+ggplot(diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M, aes(x = annotation, y = Fold*-1))+
+  geom_boxplot()
+```
+
+```{r}
+D2_WT_K4M_enrich <- diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end)
+# Write to file
+write.table(D2_WT_K4M_enrich, file="bed_files/D2_WT_K4M_enriched_D2_WT_K4M_vs_D2_TKO_K4M.bed", sep="\t", quote=F, row.names=F, col.names=F)
+
+D2_TKO_K4M_enrich <- diff_peaks_D2_WT_K4M_vs_D2_TKO_K4M %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end)
+
+# Write to file
+write.table(D2_TKO_K4M_enrich, file="bed_files/D2_TKO_K4M_enriched_D2_WT_K4M_vs_D2_TKO_K4M.bed", sep="\t", quote=F, row.names=F, col.names=F)
+```
+
+
+```{r}
+cat("number of D2_WT_K4M enriched peaks :", nrow(D2_WT_K4M_enrich),"\n")
+cat("number of D2_TKO_K4M enriched peaks :", nrow(D2_TKO_K4M_enrich))
+
+```
+

@@ -1,0 +1,169 @@
+---
+title: "ATAC_analysis"
+output: html_document
+date: "2026-01-26"
+---
+
+Goal of this script : This script performs a differential chromatin accessibility analysis (ATAC-seq)
+between all pairs of experimental conditions, using DiffBind (DESeq2)
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+library(data.table)
+library(DiffBind)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ChIPseeker)
+library(org.Mm.eg.db)
+library(Rsamtools)
+
+
+```
+
+## Retrieve input files
+
+
+```{r}
+bam_files <- list.files("bam", pattern = "\\.bam$", full.names = TRUE)
+print(bam_files)
+```
+
+
+```{r}
+peak_files<-list.files("peaks/results", full.names = TRUE)
+print(peak_files)
+```
+
+## Build the sample sheet
+
+```{r}
+sample_names <- c("D2_TKO_K4M_2","D0_TKO_H3_1","D0_TKO_H3_2","D0_TKO_K4M_1","D0_TKO_K4M_2","D0_WT_H3_1", "D0_WT_H3_2","D0_WT_K4M_1","D0_WT_K4M_2","D2_TKO_H3_1","D2_TKO_H3_2","D2_TKO_K4M_1","D2_WT_H3_1", "D2_WT_H3_2","D2_WT_K4M_1","D2_WT_K4M_2")
+
+treatment <- c("D2_TKO_K4M","D0_TKO_H3","D0_TKO_H3","D0_TKO_K4M","D0_TKO_K4M","D0_WT_H3", "D0_WT_H3","D0_WT_K4M","D0_WT_K4M","D2_TKO_H3","D2_TKO_H3","D2_TKO_K4M", "D2_WT_H3", "D2_WT_H3","D2_WT_K4M","D2_WT_K4M")
+
+sample_sheet <- data.frame(
+  SampleID = sample_names,       
+  Condition = treatment,         
+  bamReads = bam_files,          
+  Peaks = peak_files,            
+  PeakCaller = "broad",
+  stringsAsFactors = FALSE
+)
+ write.csv(sample_sheet, "atac_seq_sample_sheet.csv", row.names = FALSE)
+```
+
+
+```{r}
+str(sample_sheet)
+head(sample_sheet)
+
+```
+
+```{r}
+head(sample_sheet)
+
+```
+
+
+```{r}
+atac_db <- dba(sampleSheet = sample_sheet, scoreCol=5)
+dba.show(atac_db)
+```
+
+
+# Create the diffbind object
+```{r}
+atac_db<-dba.count(atac_db, summits = FALSE, minOverlap = 2, bUseSummarizeOverlaps = FALSE, score = DBA_SCORE_READS_FOLD, filter = 5,bParallel=FALSE)
+save(atac_db, file = "atac_db_full_counts.RData")
+```
+
+```{r}
+load("atac_db_full_counts.RData")
+```
+
+
+```{r}
+dba.show(atac_db)
+counts <- dba.peakset(atac_db, bRetrieve = TRUE)
+head(counts)
+```
+
+```{r}
+dba.plotHeatmap(atac_db)
+```
+
+
+
+```{r}
+dba.plotPCA(atac_db, DBA_CONDITION, label=DBA_ID)
+```
+
+## Create a function to automate analysis
+
+```{r}
+treatment <- c("D0_TKO_H3","D0_TKO_H3","D0_TKO_K4M","D0_TKO_K4M",
+               "D0_WT_H3","D0_WT_H3","D0_WT_K4M","D0_WT_K4M",
+               "D2_TKO_H3","D2_TKO_H3","D2_TKO_K4M","D2_TKO_K4M",
+               "D2_WT_H3","D2_WT_H3","D2_WT_K4M","D2_WT_K4M")
+
+conds <- unique(treatment)
+contrasts <- combn(conds, 2, simplify = FALSE)
+length(contrasts)   
+contrasts
+
+```
+
+```{r}
+
+# Loop over each pair of conditions.
+# For each "cond2 vs cond1" comparison:
+#   1. define the contrast
+#   2. normalize (RLE, DESeq2 method)
+#   3. run the differential analysis
+#   4. extract the report 
+#   5. save the object (.rds) and the results table (.tsv)
+
+for (c in contrasts) {
+
+  cond1 <- c[1]
+  cond2 <- c[2]
+  contrast_name <- paste(cond2, "vs", cond1, sep = "_")
+  cat("Running:", contrast_name, "\n")
+
+  db_contrast <- dba.contrast(
+    atac_db,
+    contrast = c("Condition", cond2, cond1),
+    minMembers = 2
+  )
+
+  db_contrast <- dba.normalize(
+    db_contrast,
+    method = DBA_DESEQ2,
+    normalize = DBA_NORM_RLE
+  )
+
+  db_contrast <- dba.analyze(db_contrast)
+
+  n_contrasts <- length(db_contrast$contrasts)
+  res <- dba.report(db_contrast, contrast = n_contrasts)
+
+  saveRDS(
+    db_contrast,
+    file = paste0("DiffBind_result/DiffBind_", contrast_name, ".rds")
+  )
+
+  write.table(
+    res,
+    file = paste0("DiffBind_result/DiffBind_", contrast_name, ".tsv"),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+}
+
+```
+

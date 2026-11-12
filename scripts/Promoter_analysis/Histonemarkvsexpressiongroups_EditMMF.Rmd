@@ -1,0 +1,377 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+delete comparaison d2 vs d0 
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/user/Dropbox/Greenberg Lab Sharing/People/Narjesse Hounani/RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+```
+
+```{r}
+df_TKO_H3_D2_vs_WT_H3_D2  <- read.table("H3K4M_RNAseq_RPKM_without_dup_TKO.H3.D2_vs_WT.H3.D2.txt", header = TRUE)
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- read.table("H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_TKO.H3.D2.txt", header = TRUE)
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- read.table("H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_WT.H3K4M.D2.txt", header = TRUE)
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- read.table("H3K4M_RNAseq_RPKM_without_dup_WT.H3K4M.D2_vs_WT.H3.D2.txt", header = TRUE)
+```
+
+```{r}
+table(df_WT_H3K4M_D2_vs_WT_H3_D2$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+table(df_TKO_H3K4M_D2_vs_TKO_H3_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+```
+
+### Read H3K27me3
+
+ROIs: mm10_TSS_1kb_noStrandID_unique.bed (24,313 rows)
+
+```{r}
+df_D2_TKO_H3_H3K27me3 <- read.table("../H3K27me3_H3k4me3/result_H3K27me3/RNASeq_D2_TKO_H3_H3K27me3.tab")
+df_D2_TKO_H3_H3K27me3<- dplyr::rename(df_D2_TKO_H3_H3K27me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_TKO_H3_H3K27me3"="V5","mean"="V6"))
+df_D2_TKO_H3_H3K27me3 <- df_D2_TKO_H3_H3K27me3 %>%  dplyr::select(Gene, D2_TKO_H3_H3K27me3)
+
+
+df_D2_TKO_K4M_H3K27me3 <- read.table("../H3K27me3_H3k4me3/result_H3K27me3/RNASeq_D2_TKO_K4M_H3K27me3.tab")
+df_D2_TKO_K4M_H3K27me3<- dplyr::rename(df_D2_TKO_K4M_H3K27me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_TKO_K4M_H3K27me3"="V5","mean"="V6"))
+df_D2_TKO_K4M_H3K27me3 <- df_D2_TKO_K4M_H3K27me3 %>%  dplyr::select(Gene, D2_TKO_K4M_H3K27me3)
+
+
+df_D2_WT_H3_H3K27me3 <- read.table("../H3K27me3_H3k4me3/result_H3K27me3/RNASeq_D2_WT_H3_H3K27me3.tab")
+df_D2_WT_H3_H3K27me3<- dplyr::rename(df_D2_WT_H3_H3K27me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_WT_H3_H3K27me3"="V5","mean"="V6"))
+df_D2_WT_H3_H3K27me3 <- df_D2_WT_H3_H3K27me3 %>%  dplyr::select(Gene, D2_WT_H3_H3K27me3)
+
+
+df_D2_WT_K4M_H3K27me3 <- read.table("../H3K27me3_H3k4me3/result_H3K27me3/RNASeq_D2_WT_K4M_H3K27me3.tab")
+df_D2_WT_K4M_H3K27me3<- dplyr::rename(df_D2_WT_K4M_H3K27me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_WT_K4M_H3K27me3"="V5","mean"="V6"))
+df_D2_WT_K4M_H3K27me3 <- df_D2_WT_K4M_H3K27me3 %>%  dplyr::select(Gene,D2_WT_K4M_H3K27me3)
+```
+
+### Read H3K4me3
+```{r}
+
+df_D2_TKO_H3_H3K4me3 <- read.table("../H3K27me3_H3k4me3/result_H3K4me3/RNASeq_D2_TKO_H3_H3K4me3.tab")
+df_D2_TKO_H3_H3K4me3<- dplyr::rename(df_D2_TKO_H3_H3K4me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_TKO_H3_H3K4me3"="V5","mean"="V6"))
+df_D2_TKO_H3_H3K4me3 <- df_D2_TKO_H3_H3K4me3 %>%  dplyr::select(Gene, D2_TKO_H3_H3K4me3)
+
+
+df_D2_TKO_K4M_H3K4me3 <- read.table("../H3K27me3_H3k4me3/result_H3K4me3/RNASeq_D2_TKO_K4M_H3K4me3.tab")
+df_D2_TKO_K4M_H3K4me3<- dplyr::rename(df_D2_TKO_K4M_H3K4me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_TKO_K4M_H3K4me3"="V5","mean"="V6"))
+df_D2_TKO_K4M_H3K4me3 <- df_D2_TKO_K4M_H3K4me3 %>%  dplyr::select(Gene, D2_TKO_K4M_H3K4me3)
+
+
+df_D2_WT_H3_H3K4me3 <- read.table("../H3K27me3_H3k4me3/result_H3K4me3/RNASeq_D2_WT_H3_H3K4me3.tab")
+df_D2_WT_H3_H3K4me3<- dplyr::rename(df_D2_WT_H3_H3K4me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_WT_H3_H3K4me3"="V5","mean"="V6"))
+df_D2_WT_H3_H3K4me3 <- df_D2_WT_H3_H3K4me3 %>%  dplyr::select(Gene, D2_WT_H3_H3K4me3)
+
+
+df_D2_WT_K4M_H3K4me3 <- read.table("../H3K27me3_H3k4me3/result_H3K4me3/RNASeq_D2_WT_K4M_H3K4me3.tab")
+df_D2_WT_K4M_H3K4me3<- dplyr::rename(df_D2_WT_K4M_H3K4me3,c("Gene"= "V1", "size"="V2","covered"="V3","sum"="V4","D2_WT_K4M_H3K4me3"="V5","mean"="V6"))
+df_D2_WT_K4M_H3K4me3 <- df_D2_WT_K4M_H3K4me3 %>%  dplyr::select(Gene,D2_WT_K4M_H3K4me3)
+```
+
+#### Merge genes with H3K27me3
+```{r}
+df_TKO_H3_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_TKO_H3_H3K27me3,
+  df_TKO_H3_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+df_TKO_H3_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_WT_H3_H3K27me3,
+  df_TKO_H3_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- right_join(
+  df_D2_TKO_H3_H3K27me3,
+  df_TKO_H3K4M_D2_vs_TKO_H3_D2,
+  by = c("Gene")
+)
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- right_join(
+  df_D2_TKO_K4M_H3K27me3,
+  df_TKO_H3K4M_D2_vs_TKO_H3_D2,
+  by = c("Gene")
+)
+
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_WT_K4M_H3K27me3,
+  df_WT_H3K4M_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_WT_H3_H3K27me3,
+  df_WT_H3K4M_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- right_join(
+  df_D2_TKO_K4M_H3K27me3,
+  df_TKO_H3K4M_D2_vs_WT_H3K4M_D2,
+  by = c("Gene")
+)
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- right_join(
+  df_D2_WT_K4M_H3K27me3,
+  df_TKO_H3K4M_D2_vs_WT_H3K4M_D2,
+  by = c("Gene")
+)
+```
+
+#### Merge genes with H3K4me3
+```{r}
+df_TKO_H3_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_TKO_H3_H3K4me3,
+  df_TKO_H3_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+df_TKO_H3_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_WT_H3_H3K4me3,
+  df_TKO_H3_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- right_join(
+  df_D2_TKO_H3_H3K4me3,
+  df_TKO_H3K4M_D2_vs_TKO_H3_D2,
+  by = c("Gene")
+)
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- right_join(
+  df_D2_TKO_K4M_H3K4me3,
+  df_TKO_H3K4M_D2_vs_TKO_H3_D2,
+  by = c("Gene")
+)
+
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_WT_K4M_H3K4me3,
+  df_WT_H3K4M_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- right_join(
+  df_D2_WT_H3_H3K4me3,
+  df_WT_H3K4M_D2_vs_WT_H3_D2,
+  by = c("Gene")
+)
+
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- right_join(
+  df_D2_TKO_K4M_H3K4me3,
+  df_TKO_H3K4M_D2_vs_WT_H3K4M_D2,
+  by = c("Gene")
+)
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- right_join(
+  df_D2_WT_K4M_H3K4me3,
+  df_TKO_H3K4M_D2_vs_WT_H3K4M_D2,
+  by = c("Gene")
+)
+```
+
+```{r}
+clean_NoDiff <- function(df, colname) {
+  df[[colname]][df[[colname]] == "NaN"] <- "n.s."
+  return(df)
+}
+```
+
+```{r}
+table(df_WT_H3K4M_D2_vs_WT_H3_D2$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+table(df_TKO_H3K4M_D2_vs_TKO_H3_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+```
+
+
+```{r}
+df_TKO_H3_D2_vs_WT_H3_D2 <- clean_NoDiff(df_TKO_H3_D2_vs_WT_H3_D2, "thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2")
+
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- clean_NoDiff(df_TKO_H3K4M_D2_vs_TKO_H3_D2, "thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2")
+
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- clean_NoDiff(df_TKO_H3K4M_D2_vs_WT_H3K4M_D2, "thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2")
+
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- clean_NoDiff(df_WT_H3K4M_D2_vs_WT_H3_D2, "thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2")
+
+```
+
+```{r}
+table(df_WT_H3K4M_D2_vs_WT_H3_D2$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+table(df_TKO_H3K4M_D2_vs_TKO_H3_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+```
+
+
+```{r}
+df_TKO_H3_D2_vs_WT_H3_D2$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2 <- str_replace(df_TKO_H3_D2_vs_WT_H3_D2$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2,"_.+", "")
+
+df_TKO_H3K4M_D2_vs_TKO_H3_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2 <- str_replace(df_TKO_H3K4M_D2_vs_TKO_H3_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2,"_.+", "" ) 
+
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2 <- str_replace(df_TKO_H3K4M_D2_vs_WT_H3K4M_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2,"_.+", "" ) 
+
+df_WT_H3K4M_D2_vs_WT_H3_D2$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2 <- str_replace(df_WT_H3K4M_D2_vs_WT_H3_D2$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2,"_.+", "" )
+
+```
+
+
+```{r}
+#write.csv(df_TKO_H3_D0_vs_WT_H3_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3_D0_vs_WT_H3_D0_enhancer.csv",       row.names = FALSE)
+#write.csv(df_TKO_H3_D2_vs_TKO_H3_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3_D2_vs_TKO_H3_D0_enhancer.csv",       row.names = FALSE)
+#write.csv(df_TKO_H3_D2_vs_WT_H3_D2,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3_D2_vs_WT_H3_D2_enhancer.csv",        row.names = FALSE)
+#write.csv(df_TKO_H3K4M_D0_vs_TKO_H3_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3K4M_D0_vs_TKO_H3_D0.csv",   row.names = FALSE)
+#write.csv(df_TKO_H3K4M_D0_vs_WT_H3K4M_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3K4M_D0_vs_WT_H3K4M_D0.csv", row.names = FALSE)
+#write.csv(df_TKO_H3K4M_D2_vs_TKO_H3_D2,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3K4M_D2_vs_TKO_H3_D2.csv",   row.names = FALSE)
+#write.csv(df_TKO_H3K4M_D0_vs_TKO_H3K4M_D2,file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3K4M_D0_vs_TKO_H3K4M_D2.csv",row.names = FALSE)
+#write.csv(df_TKO_H3K4M_D2_vs_WT_H3K4M_D2, file = "fichier_dataframe_RNASEQ_H3K4me3/df_TKO_H3K4M_D2_vs_WT_H3K4M_D2.csv", row.names = FALSE)
+#write.csv(df_WT_H3_D2_vs_WT_H3_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_WT_H3_D2_vs_WT_H3_D0.csv",         row.names = FALSE)
+#write.csv(df_WT_H3K4M_D0_vs_WT_H3_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_WT_H3K4M_D0_vs_WT_H3_D0.csv",      row.names = FALSE)
+#write.csv(df_WT_H3K4M_D2_vs_WT_H3_D2,file = "fichier_dataframe_RNASEQ_H3K4me3/df_WT_H3K4M_D2_vs_WT_H3_D2.csv",      row.names = FALSE)
+#write.csv(df_WT_H3K4M_D2_vs_WT_H3K4M_D0,file = "fichier_dataframe_RNASEQ_H3K4me3/df_WT_H3K4M_D2_vs_WT_H3K4M_D0.csv",   row.names = FALSE)
+```
+
+## Boxplot 
+
+#### TKO_H3 vs WT_H3: H3K27me3
+```{r}
+p <- ggplot(df_TKO_H3_D2_vs_WT_H3_D2, aes(fill = thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2, x = thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2, y = log2((D2_TKO_H3_H3K27me3+1)/(D2_WT_H3_H3K27me3+1))))+
+    geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K27me3)")+
+  theme_minimal()
+p
+```
+
+```{r}
+#p+pdf("Boxplot_H3K27me3/TKO_H3_D2_vs_WT_H3_D2_H3K27me3.pdf",width = 8, height = 6)
+```
+
+#### TKO_H3 vs WT_H3: H3K4me3
+```{r}
+p <- ggplot(df_TKO_H3_D2_vs_WT_H3_D2, aes(fill= thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2, x = thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2, y = log2((D2_TKO_H3_H3K4me3+1)/(D2_WT_H3_H3K4me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K4me3)")+
+  theme_minimal()
+p
+```
+```{r}
+#p+pdf("Boxplot_H3K4me3/TKO_H3_D2_vs_WT_H3_D2_H3K4me3.pdf",width = 8, height = 6)
+```
+
+```{r}
+table(df_TKO_H3_D2_vs_WT_H3_D2$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+```
+
+#### TKO_K4M vs TKO_H3: H3K27me3
+```{r}
+p <- ggplot(df_TKO_H3K4M_D2_vs_TKO_H3_D2, aes(fill = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2, x = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2, y = log2((D2_TKO_K4M_H3K27me3+1)/(D2_TKO_H3_H3K27me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K27me3)")+
+  theme_minimal()
+p
+```
+
+```{r}
+#p +pdf("Boxplot_H3K27me3/TKO_H3K4M_D2_vs_TKO_H3_D2_H3K27me3.pdf",width = 8, height = 6)
+```
+
+#### TKO_K4M vs TKO_H3: H3K4me3
+```{r}
+p <- ggplot(df_TKO_H3K4M_D2_vs_TKO_H3_D2, aes(fill = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2,  x = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2, y = log2((D2_TKO_K4M_H3K4me3+1)/(D2_TKO_H3_H3K4me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K4me3)")+
+  theme_minimal()
+p
+```
+```{r}
+#p + pdf("Boxplot_H3K4me3/TKO_H3K4M_D2_vs_TKO_H3_D2_H3K4me3.pdf",width = 8, height = 6)
+```
+
+```{r}
+table(df_TKO_H3K4M_D2_vs_TKO_H3_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+```
+
+
+#### TKO_K4M vs WT_K4M: H3K27me3
+```{r}
+p <- ggplot(df_TKO_H3K4M_D2_vs_WT_H3K4M_D2, aes(fill = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2,  x = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2, y = log2((D2_TKO_K4M_H3K27me3+1)/(D2_WT_K4M_H3K27me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K27me3)")+
+  theme_minimal()
+p
+```
+```{r}
+#p +pdf("Boxplot_H3K27me3/TKO_H3K4M_D2_vs_WT_H3K4M_D2_H3K27me3.pdf",width = 8, height = 6)
+```
+
+#### TKO_K4M vs WT_K4M: H3K4me3
+```{r}
+p <- ggplot(df_TKO_H3K4M_D2_vs_WT_H3K4M_D2, aes(fill = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2, x = thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2, y = log2((D2_TKO_K4M_H3K4me3+1)/(D2_WT_K4M_H3K4me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K4me3)")+
+  theme_minimal()
+p
+```
+```{r}
+#p+pdf("Boxplot_H3K4me3/TKO_H3K4M_D2_vs_WT_H3K4M_D2_H3K4me3.pdf",width = 8, height = 6)
+```
+
+```{r}
+table(df_TKO_H3K4M_D2_vs_WT_H3K4M_D2$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+```
+
+#### WT_K4M vs WT_H3: H3K27me3
+```{r}
+p <- ggplot(df_WT_H3K4M_D2_vs_WT_H3_D2, aes(fill = thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2,  x = thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2, y = log2((D2_WT_K4M_H3K27me3+1)/(D2_WT_H3_H3K27me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K27me3)")+
+  theme_minimal()
+p
+    
+```
+
+```{r}
+#p+pdf("Boxplot_H3K27me3/WT_H3K4M_D2_vs_WT_H3_D2_H3K27me3.pdf",width = 8, height = 6)
+```
+
+#### WT_K4M vs WT_H3: H3K4me3
+```{r}
+p <- ggplot(df_WT_H3K4M_D2_vs_WT_H3_D2, aes(fill = thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2,   x = thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2, y = log2((D2_WT_K4M_H3K4me3+1)/(D2_WT_H3_H3K4me3+1))))+
+  geom_boxplot(na.rm = TRUE) +
+  scale_fill_manual(values = c(UP = "red", DOWN = "blue", n.s. = "grey"),  guide = "none")+
+  scale_x_discrete(labels = c(UP = "Up", DOWN = "Down", n.s. = "n.s.")) +
+  xlab(NULL)+
+  ylab("LogFC (H3K4me3)")+
+  theme_minimal()
+p
+```
+```{r}
+#p +pdf("Boxplot_H3K4me3/WT_H3K4M_D2_vs_WT_H3_D2_H3K4me3.pdf",width = 8, height = 6)
+
+```
+
+```{r}
+table(df_WT_H3K4M_D2_vs_WT_H3_D2$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+```

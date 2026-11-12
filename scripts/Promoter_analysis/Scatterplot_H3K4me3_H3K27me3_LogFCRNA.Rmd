@@ -1,0 +1,580 @@
+---
+title: "RNA-seq vs H3K4me1/H3K4me3/H3K27me3 -- Figure S7E"
+date: "2026-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/maxim/Documents/H3K4me1_H3K4me3/")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Creating plots for Figure S7E
+
+Correct H3K27me3 measurements; correct linkage with gene.
+
+V3: Invert plot axes and coloring
+Goal : create scatterplot with y h3k4me3, x H3K27me3 and the colour the gene expression
+
+
+```{r libraries, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(GenomicRanges)
+```
+
+# Read global information
+
+## Promoters
+
+```{r promoters}
+gene_bed <- read.table("/Users/maxim/Documents/RNAseq_2i_to_EpiLC/mm10_TSS_1kb.bed5", header = TRUE)
+## Remove duplicates (no associated name, multiple IDs)
+gene_bed <- gene_bed |>
+  filter(!is.na(name)) |>
+  select(chr:name) |> distinct()
+
+gr_gene_bed <- GRanges(
+  seqnames = gene_bed$chr,
+  ranges   = IRanges(start = gene_bed$start, end = gene_bed$end),
+  Gene = gene_bed$name)
+```
+
+# Functions
+
+## H3K27me3 - Hist
+
+```{r fn-overlap-h3k27me3-mark2}
+get_overlap_H3K27me3_mark2 <- function(H3K27me3, mark2, mark2_name) {
+  logfc_col <- paste0("LogFC_", mark2_name)
+
+  gr_H3K27me3 <- GRanges(
+    seqnames = H3K27me3$seqname,
+    ranges   = IRanges(start = H3K27me3$start, end = H3K27me3$end),
+    LogFC_H3K27me3 = H3K27me3$LogFC_H3K27me3,
+    direction = H3K27me3$direction)
+
+  gr_mark2 <- GRanges(
+    seqnames = mark2$seqname,
+    ranges   = IRanges(start = mark2$start, end = mark2$end))
+  mcols(gr_mark2) <- setNames(data.frame(mark2[[logfc_col]], mark2$direction),
+                              c(logfc_col, "direction"))
+
+  hits          <- findOverlaps(gr_mark2, gr_H3K27me3)
+
+  overlaps      <- pintersect(gr_mark2[queryHits(hits)], gr_H3K27me3[subjectHits(hits)])
+  overlap_width <- width(overlaps)
+  frac_mark2    <- overlap_width / width(gr_mark2)[queryHits(hits)]
+  frac_H3K27me3 <- overlap_width / width(gr_H3K27me3)[subjectHits(hits)]
+
+  df_mark2 <- as.data.frame(gr_mark2)[queryHits(hits), ] %>%
+    dplyr::rename_with(~ paste0(.x, ".", mark2_name), .cols = c(seqnames, start, end, width, strand, direction))
+
+  df_H3K27me3 <- as.data.frame(gr_H3K27me3)[subjectHits(hits), ] %>%
+    dplyr::rename_with(~ paste0(.x, ".H3K27me3"), .cols = c(seqnames, start, end, width, strand, direction))
+
+  frac_mark2_col <- paste0("frac_", mark2_name)
+  result <- cbind(df_mark2,
+                  df_H3K27me3,
+                  setNames(data.frame(overlap_width, frac_mark2, frac_H3K27me3),
+                           c("overlap_width", frac_mark2_col, "frac_H3K27me3")))
+
+  seqnames_mark2_col <- paste0("seqnames.", mark2_name)
+  start_mark2_col    <- paste0("start.", mark2_name)
+  end_mark2_col      <- paste0("end.", mark2_name)
+
+  result <- result %>%
+    group_by(.data[[seqnames_mark2_col]], .data[[start_mark2_col]], .data[[end_mark2_col]]) %>%
+    filter(.data[[frac_mark2_col]] == max(.data[[frac_mark2_col]])) %>% ## Keep highest coverage of mark2 region
+    ungroup()
+
+  direction_mark2_col <- paste0("direction.", mark2_name)
+  result <- result %>% mutate(direction.both = case_when(
+    .data[[direction_mark2_col]] != "none" & direction.H3K27me3 != "none" ~ "Both",
+    .data[[direction_mark2_col]] != "none" & direction.H3K27me3 == "none" ~ mark2_name,
+    .data[[direction_mark2_col]] == "none" & direction.H3K27me3 != "none" ~ "H3K27me3",
+    TRUE                                                                  ~ "None"),
+    direction.both = factor(direction.both, levels = c("H3K27me3", mark2_name, "Both", "None")))
+
+  result
+}
+```
+
+
+## H3K27me3-Hist - Promoter
+
+```{r fn-overlap-mark2-promoter}
+get_overlap_mark2_promoter <- function(overlap_result, mark2_name) {
+  seqnames_mark2_col <- paste0("seqnames.", mark2_name)
+  start_mark2_col    <- paste0("start.", mark2_name)
+  end_mark2_col      <- paste0("end.", mark2_name)
+
+  ## This function uses the coordinates of the mark2 peak as anchor
+  gr.K27me3.mark2 <- GRanges(seqnames = overlap_result[[seqnames_mark2_col]],
+                             ranges   = IRanges(start = overlap_result[[start_mark2_col]], end = overlap_result[[end_mark2_col]]))
+  mcols(gr.K27me3.mark2) <- overlap_result
+
+  gr.H3K27me3 <- GRanges(seqnames = overlap_result$seqnames.H3K27me3,
+                         ranges   = IRanges(start = overlap_result$start.H3K27me3, end = overlap_result$end.H3K27me3))
+
+  hits <- findOverlaps(gr.K27me3.mark2, gr_gene_bed)
+
+  overlaps_promoter      <- pintersect(gr.K27me3.mark2[queryHits(hits)], gr_gene_bed[subjectHits(hits)])
+  overlap_width_promoter <- width(overlaps_promoter)
+  frac_promoter          <- overlap_width_promoter/width(gr_gene_bed)[subjectHits(hits)]
+
+  ## Ensure the promoter overlaps with the H3K27me3 peak
+  overlaps_H3K27me3_promoter      <- pintersect(gr.H3K27me3[queryHits(hits)], gr_gene_bed[subjectHits(hits)])
+  overlap_width_H3K27me3_promoter <- width(overlaps_H3K27me3_promoter)
+  frac_H3K27me3_promoter          <- overlap_width_H3K27me3_promoter/width(gr_gene_bed)[subjectHits(hits)]
+
+  result <- cbind(
+    as.data.frame(gr.K27me3.mark2)[queryHits(hits),],
+    as.data.frame(gr_gene_bed)[subjectHits(hits),] %>%
+      dplyr::select(seqnames.Prom = seqnames, start.Prom = start, end.Prom = end, Gene),
+    overlap_width_promoter = overlap_width_promoter,
+    frac_promoter = frac_promoter,
+    overlap_width_H3K27me3_promoter = overlap_width_H3K27me3_promoter,
+    frac_H3K27me3_promoter = frac_H3K27me3_promoter)
+
+  result <- result %>%
+    filter(overlap_width_H3K27me3_promoter > 0) %>%
+    group_by(seqnames, start, end) %>%
+    filter(frac_promoter == max(frac_promoter)) %>% ## Keep the promoter with the maximum overlap
+    filter(frac_H3K27me3_promoter == max(frac_H3K27me3_promoter)) %>%
+    ungroup()
+
+  result
+}
+```
+
+## Print number of dots per quadrant
+
+```{r fn-quadrants}
+quadrants <- function(data, x.axis, y.axis) {
+  result <- data %>%
+    filter({{ x.axis }} != 0, {{ y.axis }} != 0) %>%
+    mutate(result = case_when(
+      {{ x.axis }} < 0 & {{ y.axis }} > 0 ~ "haut gauche",
+      {{ x.axis }} < 0 & {{ y.axis }} < 0 ~ "bas gauche",
+      {{ x.axis }} > 0 & {{ y.axis }} > 0 ~ "haut droite",
+      {{ x.axis }} > 0 & {{ y.axis }} < 0 ~ "bas droite"),
+      result = factor(result, levels = c("haut gauche", "bas gauche", "haut droite", "bas droite"))) %>%
+    count(result) %>%
+    mutate(proportion = round(n / sum(n) * 100, 2))
+
+  result
+}
+```
+
+```{r}
+quadrants_RNA <- function(data, x.axis, y.axis, direction) {
+  Gene_quad <- data %>%
+    filter({{ x.axis }} != 0, {{ y.axis }} != 0) %>%
+    #filter({{ direction }} %in% c("UP", "DOWN")) %>%   ## keep DE genes only (drop "NS")
+    mutate(
+      result = case_when(
+        {{ x.axis }} < 0 & {{ y.axis }} > 0 ~ "haut gauche",
+        {{ x.axis }} < 0 & {{ y.axis }} < 0 ~ "bas gauche",
+        {{ x.axis }} > 0 & {{ y.axis }} > 0 ~ "haut droite",
+        {{ x.axis }} > 0 & {{ y.axis }} < 0 ~ "bas droite"),
+      result = factor(result, levels = c("haut gauche", "bas gauche", "haut droite", "bas droite")),
+      {{ direction }} := factor({{ direction }}, levels = c("NS", "UP", "DOWN"))) %>%
+    select(Gene, {{ direction }}, result) %>% distinct() %>% ## Remove enhancers/promoters with the same quadrant and target gene
+    count(result, {{ direction }}, .drop = FALSE) %>%   ## number of NS / UP / DOWN genes per quadrant
+    tidyr::pivot_wider(names_from = {{ direction }}, values_from = n, values_fill = 0)   ## one row per quadrant, columns NS / UP / DOWN
+  
+  Gene_quad
+}
+```
+
+# WT_K4M vs WT_H3
+
+## Read tables of histone marks
+
+### H3K4me3
+
+```{r wt-k4m-h3-h3k4me3}
+df_H3K4me3_all <- read.table("/Users/maxim/Documents/MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me3/H3K4me3_all_D2_H3_WT_vs_D2_K4M_WT.bed", header = TRUE, sep = "\t")
+df_H3K4me3_all <- dplyr::rename(df_H3K4me3_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me3 = Fold)
+## Check contrast (most should lose H3K4me3)
+sum(df_H3K4me3_all$LogFC_H3K4me3 > 0)
+sum(df_H3K4me3_all$LogFC_H3K4me3 < 0)
+## Mark DE
+df_H3K4me3_all <- df_H3K4me3_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me3 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me3_all$direction)
+```
+
+### H3K27me3
+
+```{r wt-k4m-h3-h3k27me3}
+df_H3K27me3_all <- read.table("/Users/maxim/Documents/Marlet/Results/H3K27me3/D2_WT_H3_vs_D2_WT_K4M_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start= as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end= as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+## Combine H3K4me1/3 with H3K27me3
+
+```{r wt-k4m-h3-combine}
+result_H3K4me3_H3K27me3 <- get_overlap_H3K27me3_mark2(H3K27me3 = df_H3K27me3_all, mark2 = df_H3K4me3_all, mark2_name = "H3K4me3")
+## Intersect H3K4me3-H3K27me3 with promoters
+result_H3K4me3_H3K27me3_promoter <- get_overlap_mark2_promoter(result_H3K4me3_H3K27me3, mark2_name = "H3K4me3")
+
+rm(result_H3K4me3_H3K27me3)
+```
+
+## Import limma results and merge
+
+```{r}
+clean_NoDiff <- function(df, colname) {
+  df[[colname]][df[[colname]] == "NaN"] <- "n.s."
+  return(df)
+}
+```
+
+```{r wt-k4m-h3-rna}
+df_RNA <- read.table("/Users/maxim/Documents/RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_WT.H3K4M.D2_vs_WT.H3.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC)
+## Clean DE tags
+df_RNA$thresh_adjp005_fc1 <- str_remove(df_RNA$thresh_adjp005_fc1, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- clean_NoDiff(df_RNA, "thresh_adjp005_fc1")
+
+## Add RNAseq information; drop non-quantified genes
+## Promoters
+result_H3K4me3_H3K27me3_promoter <- result_H3K4me3_H3K27me3_promoter %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+## Plots
+
+### RNA vs H3K4me1 at enhancers, colored by H3K27me3
+
+This one is for the paper.
+
+### RNA vs H3K4me3 at promoters, colored by H3K27me3
+
+```{r wt-k4m-h3-plot-promoter v2}
+p <- ggplot(result_H3K4me3_H3K27me3_promoter, aes(x = LogFC_H3K27me3, y = LogFC_H3K4me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+quadrants(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3)
+## Export
+# ggsave(filename = "D2_WT_K4M_vs_D2_WT_H3_H3K4me3_RNA_H3K27me3_promoter_inv.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+
+```{r}
+quadrants_RNA(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3, direction = thresh_adjp005_fc1)
+## Export
+# ggsave(filename = "D2_WT_K4M_vs_D2_WT_H3_H3K4me3_RNA_H3K27me3_promoter_inv.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+
+# TKO_K4M vs TKO_H3
+
+## Read tables of histone marks
+
+### H3K4me3
+
+```{r tko-k4m-h3-h3k4me3}
+df_H3K4me3_all <- read.table("/Users/maxim/Documents/MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me3/H3K4me3_all_D2_H3_TKO_vs_K4M_TKO.bed", header = TRUE, sep = "\t")
+df_H3K4me3_all <- dplyr::rename(df_H3K4me3_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me3 = Fold)
+## Check contrast (most should lose H3K4me3)
+sum(df_H3K4me3_all$LogFC_H3K4me3 > 0)
+sum(df_H3K4me3_all$LogFC_H3K4me3 < 0)
+## Mark DE
+df_H3K4me3_all <- df_H3K4me3_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me3 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me3_all$direction)
+```
+
+### H3K27me3
+
+```{r tko-k4m-h3-h3k27me3}
+df_H3K27me3_all <- read.table("/Users/maxim/Documents/Marlet/Results/H3K27me3/D2_TKO_H3_vs_D2_TKO_K4M_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start= as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end= as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+## Combine H3K4me3 with H3K27me3
+
+```{r tko-k4m-h3-combine}
+result_H3K4me3_H3K27me3 <- get_overlap_H3K27me3_mark2(H3K27me3 = df_H3K27me3_all, mark2 = df_H3K4me3_all, mark2_name = "H3K4me3")
+
+## Intersect H3K4me3-H3K27me3 with promoters
+result_H3K4me3_H3K27me3_promoter <- get_overlap_mark2_promoter(result_H3K4me3_H3K27me3, mark2_name = "H3K4me3")
+
+rm(result_H3K4me3_H3K27me3)
+```
+
+## Import limma results and merge
+
+```{r tko-k4m-h3-rna}
+df_RNA <- read.table("/Users/maxim/Documents/RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_TKO.H3.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC)
+## Clean DE tags
+df_RNA$thresh_adjp005_fc1 <- str_remove(df_RNA$thresh_adjp005_fc1, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- clean_NoDiff(df_RNA, "thresh_adjp005_fc1")
+## Promoters
+result_H3K4me3_H3K27me3_promoter <- result_H3K4me3_H3K27me3_promoter %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+## Plots
+
+
+
+### RNA vs H3K4me3 at promoters, colored by H3K27me3
+
+
+Inverted axes
+```{r tko-k4m-h3-plot-promoter v2}
+p <- ggplot(result_H3K4me3_H3K27me3_promoter, aes(x = LogFC_H3K27me3, y = LogFC_H3K4me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+quadrants(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3)
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_TKO_H3_H3K4me3_RNA_H3K27me3_promoter_inv.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+```{r}
+quadrants_RNA(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3, direction = thresh_adjp005_fc1)
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_TKO_H3_H3K4me3_RNA_H3K27me3_promoter_inv.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+
+# TKO_H3 vs WT_H3
+
+## Read tables of histone marks
+
+### H3K4me3
+
+```{r tko-h3-wt-h3-h3k4me3}
+df_H3K4me3_all <- read.table("/Users/maxim/Documents/MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me3/H3K4me3_all_D2_H3_WT_vs_H3_TKO.bed", header = TRUE, sep = "\t")
+df_H3K4me3_all <- dplyr::rename(df_H3K4me3_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me3 = Fold)
+## Check contrast (most should lose H3K4me3)
+sum(df_H3K4me3_all$LogFC_H3K4me3 > 0)
+sum(df_H3K4me3_all$LogFC_H3K4me3 < 0)
+## Mark DE
+df_H3K4me3_all <- df_H3K4me3_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me3 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me3_all$direction)
+```
+
+### H3K27me3
+
+```{r tko-h3-wt-h3-h3k27me3}
+df_H3K27me3_all <- read.table("/Users/maxim/Documents/Marlet/Results/H3K27me3/D2_WT_H3_vs_D2_TKO_H3_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start= as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end= as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+## Combine H3K4me1/3 with H3K27me3
+
+```{r tko-h3-wt-h3-combine}
+result_H3K4me3_H3K27me3 <- get_overlap_H3K27me3_mark2(H3K27me3 = df_H3K27me3_all, mark2 = df_H3K4me3_all, mark2_name = "H3K4me3")
+## Intersect H3K4me3-H3K27me3 with promoters
+result_H3K4me3_H3K27me3_promoter <- get_overlap_mark2_promoter(result_H3K4me3_H3K27me3, mark2_name = "H3K4me3")
+
+rm(result_H3K4me3_H3K27me3)
+```
+
+## Import limma results and merge
+
+```{r tko-h3-wt-h3-rna}
+df_RNA <- read.table("/Users/maxim/Documents/RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_TKO.H3.D2_vs_WT.H3.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC)
+## Clean DE tags
+df_RNA$thresh_adjp005_fc1 <- str_remove(df_RNA$thresh_adjp005_fc1, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- clean_NoDiff(df_RNA, "thresh_adjp005_fc1")
+## Add RNAseq information; drop non-quantified genes
+## Promoters
+result_H3K4me3_H3K27me3_promoter <- result_H3K4me3_H3K27me3_promoter %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+## Plots
+### RNA vs H3K4me3 at promoters, colored by H3K27me3
+
+```{r tko-h3-wt-h3-plot-promoter v2}
+p <- ggplot(result_H3K4me3_H3K27me3_promoter, aes(x = LogFC_H3K27me3, y = LogFC_H3K4me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+quadrants(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3)
+## Export
+# ggsave(filename = "D2_TKO_H3_vs_D2_WT_H3_H3K4me3_RNA_H3K27me3_promoter_v2.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r}
+quadrants_RNA(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3, direction = thresh_adjp005_fc1)
+## Export
+# ggsave(filename = "D2_TKO_H3_vs_D2_WT_H3_H3K4me3_RNA_H3K27me3_promoter_v2.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+
+
+# TKO_K4M vs WT_K4M
+
+## Read tables of histone marks
+
+### H3K4me3
+
+```{r tko-k4m-wt-k4m-h3k4me3}
+df_H3K4me3_all <- read.table("/Users/maxim/Documents/MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me3/H3K4me3_all_D2_K4M_WT_vs_K4M_TKO.bed", header = TRUE, sep = "\t")
+df_H3K4me3_all <- dplyr::rename(df_H3K4me3_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me3 = Fold)
+## Check contrast (most should lose H3K4me3)
+sum(df_H3K4me3_all$LogFC_H3K4me3 > 0)
+sum(df_H3K4me3_all$LogFC_H3K4me3 < 0)
+## Mark DE
+df_H3K4me3_all <- df_H3K4me3_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me3 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me3_all$direction)
+```
+
+### H3K27me3
+
+```{r tko-k4m-wt-k4m-h3k27me3}
+df_H3K27me3_all <- read.table("/Users/maxim/Documents/Marlet/Results/H3K27me3/D2_WT_K4M_vs_D2_TKO_K4M_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start= as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end= as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+## Combine H3K4me1/3 with H3K27me3
+
+```{r tko-k4m-wt-k4m-combine}
+result_H3K4me3_H3K27me3 <- get_overlap_H3K27me3_mark2(H3K27me3 = df_H3K27me3_all, mark2 = df_H3K4me3_all, mark2_name = "H3K4me3")
+## Intersect H3K4me3-H3K27me3 with promoters
+result_H3K4me3_H3K27me3_promoter <- get_overlap_mark2_promoter(result_H3K4me3_H3K27me3, mark2_name = "H3K4me3")
+
+rm(result_H3K4me3_H3K27me3)
+```
+
+## Import limma results and merge
+
+```{r tko-k4m-wt-k4m-rna}
+df_RNA <- read.table("/Users/maxim/Documents/RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_WT.H3K4M.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC)
+## Clean DE tags
+df_RNA$thresh_adjp005_fc1 <- str_remove(df_RNA$thresh_adjp005_fc1, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- clean_NoDiff(df_RNA, "thresh_adjp005_fc1")
+
+
+## Promoters
+result_H3K4me3_H3K27me3_promoter <- result_H3K4me3_H3K27me3_promoter %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+## Plots
+
+### RNA vs H3K4me3 at promoters, colored by H3K27me3
+
+
+Inverted axes
+```{r tko-k4m-wt-k4m-plot-promoter v2}
+p <- ggplot(result_H3K4me3_H3K27me3_promoter, aes(x = LogFC_H3K27me3, y = LogFC_H3K4me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+quadrants(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3)
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_WT_K4M_H3K4me3_RNA_H3K27me3_promoter_inv.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r}
+quadrants_RNA(data = result_H3K4me3_H3K27me3_promoter, x.axis = LogFC_H3K27me3, y.axis = LogFC_H3K4me3, direction = thresh_adjp005_fc1)
+## Export
+# ggsave(filename = "D2_TKO_H3_vs_D2_WT_H3_H3K4me3_RNA_H3K27me3_promoter_v2.pdf",
+#        path = "/Users/maxim/Documents/Marlet/Plots/RNA_H3K27me3/H3K4me3_promoters/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```

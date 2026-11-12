@@ -1,0 +1,999 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-05-28"
+---
+
+Goal : This script integrates four layers of data at enhancer DMRs (differentially
+methylated regions) to see how chromatin changes relate to gene expression at day 2 (D2):
+
+- H3K4me1 differential signal (log fold change)
+- ATAC-seq differential accessibility (MATAC fold change)
+- Enhancer DMRs (`up` / `down`, with enhancer type and associated gene)
+- RNA-seq differential expression of the gene associated with each enhancer
+
+
+```{r}
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+library(GenomicRanges)
+```
+
+# Enhancer dmr
+```{r}
+# Differential H3K4me1 peaks for each comparison (BED-like tables with header)
+D2_TKO_K4M_vs_K4M_WT_H3K4me1 <- read.table("D2_WT_K4M_vs_D2_TKO_K4M_H3K4me1.bed",header = TRUE)
+D2_TKO_H3_vs_H3_WT_H3K4me1 <- read.table("D2_WT_H3_vs_D2_TKO_H3_H3K4me1.bed", header = TRUE)
+D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1 <- read.table("D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1.bed", header = TRUE)
+D2_WT_K4M_vs_D2_WT_H3_H3K4me1 <- read.table("D2_WT_K4M_vs_D2_WT_H3_H3K4me1.bed",header = TRUE)
+```
+
+```{r}
+D2_TKO_K4M_vs_K4M_WT_H3K4me1 <- dplyr::rename(D2_TKO_K4M_vs_K4M_WT_H3K4me1,LogFC_H3K4me1 = Fold )
+D2_TKO_H3_vs_H3_WT_H3K4me1 <- dplyr::rename(D2_TKO_H3_vs_H3_WT_H3K4me1,LogFC_H3K4me1 = Fold )
+D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1 <- dplyr::rename(D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1,LogFC_H3K4me1 = Fold )
+D2_WT_K4M_vs_D2_WT_H3_H3K4me1 <- dplyr::rename(D2_WT_K4M_vs_D2_WT_H3_H3K4me1,LogFC_H3K4me1 = Fold )
+```
+
+```{r}
+D2_WT_K4M_vs_D2_TKO_K4M_MATAC <- read.delim("D2_WT_K4M_vs_D2_TKO_K4M_MATAC.csv", header = TRUE, quote = "", fill = TRUE)
+D2_WT_K4M_vs_D2_TKO_K4M_MATAC <- D2_WT_K4M_vs_D2_TKO_K4M_MATAC %>% mutate (Fold_MATAC = Fold*-1) # also do this for df_D2_WT_H3_vs_D2_TKO_H3 because order contrast isn't correct
+D2_TKO_K4M_vs_D2_TKO_H3_MATAC <- read.table("diff_peaks_D2_TKO_K4M_vs_D2_TKO_H3_MATAC.tsv",header = TRUE)
+D2_WT_K4M_vs_D2_WT_H3_MATAC <- read.table("diff_peaks_D2_WT_K4M_vs_D2_WT_H3_MATAC.tsv", header = TRUE)
+D2_WT_H3_vs_D2_TKO_H3_MATAC <- read.table("diff_peaks_D2_WT_H3_vs_D2_TKO_H3_MATAC.tsv", header = TRUE)
+D2_WT_H3_vs_D2_TKO_H3_MATAC <- D2_WT_H3_vs_D2_TKO_H3_MATAC %>% mutate (Fold_MATAC = Fold*-1)
+
+```
+
+
+```{r}
+Enhancer_dmr <- read.table("/Users/maxim/Documents/MethyLasso_Angelique_v2/H3_vs_K4M_all_dmr_enhancer.bed", header = TRUE, sep = "\t")
+```
+
+
+# Overlap H3K4me1 peaks with enhancer DMRs
+
+For each comparison: convert both tables to GRanges, find overlaps, and keep
+the H3K4me1 peaks that overlap an enhancer DMR together with the DMR annotations. Duplicated peaks are removed with distinct().
+```{r}
+gr_D2_TKO_K4M_vs_K4M_WT_H3K4me1 <- GRanges(
+  seqnames = D2_TKO_K4M_vs_K4M_WT_H3K4me1$Chr,
+  ranges   = IRanges(start = D2_TKO_K4M_vs_K4M_WT_H3K4me1$Start, end = D2_TKO_K4M_vs_K4M_WT_H3K4me1$End),
+  LogFC_H3K4me1 = D2_TKO_K4M_vs_K4M_WT_H3K4me1$LogFC_H3K4me1
+
+)
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type,
+  gene_name =Enhancer_dmr$gene_name
+
+)
+hits_D2_TKO_K4M_vs_K4M_WT_enhancer_dmr <- findOverlaps(gr_D2_TKO_K4M_vs_K4M_WT_H3K4me1, gr_Enhancer_dmr)
+
+result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr <- cbind(
+  as.data.frame(gr_D2_TKO_K4M_vs_K4M_WT_H3K4me1)[queryHits(hits_D2_TKO_K4M_vs_K4M_WT_enhancer_dmr), ],
+  Enhancer_type = gr_Enhancer_dmr$Enhancer_type[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_enhancer_dmr)],
+  cat = gr_Enhancer_dmr$cat[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_enhancer_dmr)],
+  gene_name =gr_Enhancer_dmr$gene_name[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_enhancer_dmr)]
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr)
+nrow(result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr)
+```
+
+
+```{r}
+gr_D2_TKO_H3_vs_H3_WT_H3K4me1 <- GRanges(
+  seqnames = D2_TKO_H3_vs_H3_WT_H3K4me1$Chr,
+  ranges   = IRanges(start = D2_TKO_H3_vs_H3_WT_H3K4me1$Start, end = D2_TKO_H3_vs_H3_WT_H3K4me1$End),
+  LogFC_H3K4me1 = D2_TKO_H3_vs_H3_WT_H3K4me1$LogFC_H3K4me1
+
+)
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type,
+  gene_name =Enhancer_dmr$gene_name
+
+)
+hits_D2_TKO_H3_vs_H3_WT_enhancer_dmr <- findOverlaps(gr_D2_TKO_H3_vs_H3_WT_H3K4me1, gr_Enhancer_dmr)
+
+result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr <- cbind(
+  as.data.frame(gr_D2_TKO_H3_vs_H3_WT_H3K4me1)[queryHits(hits_D2_TKO_H3_vs_H3_WT_enhancer_dmr), ],
+  Enhancer_type = gr_Enhancer_dmr$Enhancer_type[subjectHits(hits_D2_TKO_H3_vs_H3_WT_enhancer_dmr)],
+  cat = gr_Enhancer_dmr$cat[subjectHits(hits_D2_TKO_H3_vs_H3_WT_enhancer_dmr)],
+  gene_name = gr_Enhancer_dmr$gene_name[subjectHits(hits_D2_TKO_H3_vs_H3_WT_enhancer_dmr)]
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr)
+nrow(result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr)
+```
+
+
+```{r}
+gr_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1 <- GRanges(
+  seqnames = D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1$Chr,
+  ranges   = IRanges(start = D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1$Start, end = D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1$End),
+  LogFC_H3K4me1 = D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1$LogFC_H3K4me1
+
+)
+
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type,
+  gene_name =Enhancer_dmr$gene_name
+
+)
+
+hits_D2_TKO_K4M_vs_D2_TKO_H3_enhancer_dmr <- findOverlaps(gr_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1, gr_Enhancer_dmr)
+
+result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr <- cbind(
+  as.data.frame(gr_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1)[queryHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_enhancer_dmr), ],
+  Enhancer_type = gr_Enhancer_dmr$Enhancer_type[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_enhancer_dmr)],
+  cat = gr_Enhancer_dmr$cat[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_enhancer_dmr)],
+  gene_name = gr_Enhancer_dmr$gene_name[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_enhancer_dmr)]
+
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr)
+nrow(result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr)
+```
+
+```{r}
+gr_D2_WT_K4M_vs_D2_WT_H3_H3K4me1 <- GRanges(
+  seqnames = D2_WT_K4M_vs_D2_WT_H3_H3K4me1$Chr,
+  ranges   = IRanges(start = D2_WT_K4M_vs_D2_WT_H3_H3K4me1$Start, end = D2_WT_K4M_vs_D2_WT_H3_H3K4me1$End),
+  LogFC_H3K4me1 = D2_WT_K4M_vs_D2_WT_H3_H3K4me1$LogFC_H3K4me1
+
+)
+
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type,
+  gene_name =Enhancer_dmr$gene_name
+
+
+)
+
+hits_D2_WT_K4M_vs_D2_WT_H3_enhancer_dmr <- findOverlaps(gr_D2_WT_K4M_vs_D2_WT_H3_H3K4me1, gr_Enhancer_dmr)
+
+result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr <- cbind(
+  as.data.frame(gr_D2_WT_K4M_vs_D2_WT_H3_H3K4me1)[queryHits(hits_D2_WT_K4M_vs_D2_WT_H3_enhancer_dmr), ],
+  Enhancer_type = gr_Enhancer_dmr$Enhancer_type[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_enhancer_dmr)],
+  cat = gr_Enhancer_dmr$cat[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_enhancer_dmr)],
+  gene_name = gr_Enhancer_dmr$gene_name[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_enhancer_dmr)]
+  
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr)
+nrow(result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr)
+```
+
+
+# Overlap MATAC peaks with enhancer DMRs
+
+Same logic as above, but for the ATAC-seq (MATAC) differential peaks. Only the
+peak coordinates and Fold_MATAC are kept here; DMR annotations come from the
+H3K4me1 tables
+
+
+```{r}
+gr_D2_TKO_K4M_vs_K4M_WT_MATAC <- GRanges(
+  seqnames = D2_WT_K4M_vs_D2_TKO_K4M_MATAC$seqnames,
+  ranges   = IRanges(start = D2_WT_K4M_vs_D2_TKO_K4M_MATAC$start, end = D2_WT_K4M_vs_D2_TKO_K4M_MATAC$end),
+  Fold_MATAC = D2_WT_K4M_vs_D2_TKO_K4M_MATAC$Fold_MATAC
+
+)
+
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type
+  
+
+)
+hits_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr <- findOverlaps(gr_D2_TKO_K4M_vs_K4M_WT_MATAC, gr_Enhancer_dmr)
+
+result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr <- cbind(
+  as.data.frame(gr_D2_TKO_K4M_vs_K4M_WT_MATAC)[queryHits(hits_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr), ]
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr)
+nrow(result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr)
+```
+```{r}
+gr_D2_TKO_H3_vs_H3_WT_MATAC <- GRanges(
+  seqnames = D2_WT_H3_vs_D2_TKO_H3_MATAC$seqnames,
+  ranges   = IRanges(start = D2_WT_H3_vs_D2_TKO_H3_MATAC$start, end = D2_WT_H3_vs_D2_TKO_H3_MATAC$end),
+  Fold_MATAC = D2_WT_H3_vs_D2_TKO_H3_MATAC$Fold_MATAC
+
+)
+
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type
+
+)
+hits_D2_TKO_H3_vs_H3_WT_MATAC_dmr <- findOverlaps(gr_D2_TKO_H3_vs_H3_WT_MATAC, gr_Enhancer_dmr)
+
+result_D2_TKO_H3_vs_H3_WT_MATAC_dmr <- cbind(
+  as.data.frame(gr_D2_TKO_H3_vs_H3_WT_MATAC)[queryHits(hits_D2_TKO_H3_vs_H3_WT_MATAC_dmr), ]
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_TKO_H3_vs_H3_WT_MATAC_dmr)
+nrow(result_D2_TKO_H3_vs_H3_WT_MATAC_dmr)
+```
+
+```{r}
+gr_D2_TKO_K4M_vs_D2_TKO_H3_MATAC <- GRanges(
+  seqnames = D2_TKO_K4M_vs_D2_TKO_H3_MATAC$seqnames,
+  ranges   = IRanges(start = D2_TKO_K4M_vs_D2_TKO_H3_MATAC$start, end = D2_TKO_K4M_vs_D2_TKO_H3_MATAC$end),
+  Fold_MATAC = D2_TKO_K4M_vs_D2_TKO_H3_MATAC$Fold
+
+)
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type
+
+)
+hits_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr <- findOverlaps(gr_D2_TKO_K4M_vs_D2_TKO_H3_MATAC, gr_Enhancer_dmr)
+
+result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr <- cbind(
+  as.data.frame(gr_D2_TKO_K4M_vs_D2_TKO_H3_MATAC)[queryHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr), ]
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr)
+nrow(result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr)
+```
+
+```{r}
+gr_D2_WT_K4M_vs_D2_WT_H3_MATAC <- GRanges(
+  seqnames = D2_WT_K4M_vs_D2_WT_H3_MATAC$seqnames,
+  ranges   = IRanges(start = D2_WT_K4M_vs_D2_WT_H3_MATAC$start, end = D2_WT_K4M_vs_D2_WT_H3_MATAC$end),
+  Fold_MATAC = D2_WT_K4M_vs_D2_WT_H3_MATAC$Fold
+
+)
+gr_Enhancer_dmr <- GRanges(
+  seqnames = Enhancer_dmr$seqnames,
+  ranges   = IRanges(start = Enhancer_dmr$start, end = Enhancer_dmr$end),
+  Enhancer_type = Enhancer_dmr$annot.type.1,
+  cat = Enhancer_dmr$dmr_type
+
+)
+hits_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr <- findOverlaps(gr_D2_WT_K4M_vs_D2_WT_H3_MATAC, gr_Enhancer_dmr)
+
+result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr <- cbind(
+  as.data.frame(gr_D2_WT_K4M_vs_D2_WT_H3_MATAC)[queryHits(hits_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr), ]
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr)
+nrow(result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr)
+```
+
+#. Combine MATAC and H3K4me1 at enhancer DMRs
+
+For each comparison, overlap MATAC peaks (in enhancer DMRs) with H3K4me1 peaks
+(in enhancer DMRs). The result  has one row per MATAC peak with
+its Fold_MATAC, the matching LogFC_H3K4me1, enhancer type, DMR category and gene.
+
+
+
+```{r}
+gr_result_D2_TKO_H3_vs_H3_WT_MATAC_dmr <- GRanges(
+  seqnames = result_D2_TKO_H3_vs_H3_WT_MATAC_dmr$seqnames,
+  ranges   = IRanges(start = result_D2_TKO_H3_vs_H3_WT_MATAC_dmr$start, end = result_D2_TKO_H3_vs_H3_WT_MATAC_dmr$end),
+  Fold_MATAC = result_D2_TKO_H3_vs_H3_WT_MATAC_dmr$Fold_MATAC,
+)
+
+gr_result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr <- GRanges(
+  seqnames = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$seqname,
+  ranges   = IRanges(start = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$start, end = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$end),
+  LogFC_H3K4me1 = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$LogFC_H3K4me1,
+  Enhancer_type = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$Enhancer_type,
+  cat = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$cat,
+  gene_name = result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$gene_name
+
+)
+
+hits_D2_TKO_H3_vs_H3_WT_dmr <- findOverlaps(gr_result_D2_TKO_H3_vs_H3_WT_MATAC_dmr, gr_result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr)
+
+scatterplot_D2_TKO_H3_vs_H3_WT_dmr <- cbind(
+  as.data.frame(gr_result_D2_TKO_H3_vs_H3_WT_MATAC_dmr)[queryHits(hits_D2_TKO_H3_vs_H3_WT_dmr), ],
+  LogFC_H3K4me1 = gr_result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$LogFC_H3K4me1[subjectHits(hits_D2_TKO_H3_vs_H3_WT_dmr)],
+  Enhancer_type = gr_result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$Enhancer_type[subjectHits(hits_D2_TKO_H3_vs_H3_WT_dmr)],
+    cat = gr_result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$cat[subjectHits(hits_D2_TKO_H3_vs_H3_WT_dmr)],
+   gene_name = gr_result_D2_TKO_H3_vs_H3_WT_H3K4me1_dmr$gene_name[subjectHits(hits_D2_TKO_H3_vs_H3_WT_dmr)]
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(scatterplot_D2_TKO_H3_vs_H3_WT_dmr)
+nrow(scatterplot_D2_TKO_H3_vs_H3_WT_dmr)
+```
+
+```{r}
+gr_result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr <- GRanges(
+  seqnames = result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr$seqnames,
+  ranges   = IRanges(start = result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr$start, end = result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr$end),
+  Fold_MATAC = result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr$Fold_MATAC,
+)
+
+gr_result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr <- GRanges(
+  seqnames = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$seqname,
+  ranges   = IRanges(start = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$start, end = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$end),
+  LogFC_H3K4me1 = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$LogFC_H3K4me1,
+  Enhancer_type = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$Enhancer_type,
+  cat = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$cat,
+  gene_name = result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$gene_name
+
+)
+
+hits_D2_TKO_K4M_vs_K4M_WT_dmr <- findOverlaps(gr_result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr, gr_result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr)
+
+scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr <- cbind(
+  as.data.frame(gr_result_D2_TKO_K4M_vs_K4M_WT_MATAC_dmr)[queryHits(hits_D2_TKO_K4M_vs_K4M_WT_dmr), ],
+  LogFC_H3K4me1 = gr_result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$LogFC_H3K4me1[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_dmr)],
+  Enhancer_type = gr_result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$Enhancer_type[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_dmr)],
+    cat = gr_result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$cat[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_dmr)],
+  gene_name = gr_result_D2_TKO_K4M_vs_K4M_WT_H3K4me1_dmr$gene_name[subjectHits(hits_D2_TKO_K4M_vs_K4M_WT_dmr)]
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr)
+nrow(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr)
+```
+
+```{r}
+gr_result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr <- GRanges(
+  seqnames = result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr$seqnames,
+  ranges   = IRanges(start = result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr$start, end = result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr$end),
+  Fold_MATAC = result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr$Fold_MATAC,
+)
+
+gr_result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr <- GRanges(
+  seqnames = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$seqname,
+  ranges   = IRanges(start = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$start, end = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$end),
+  LogFC_H3K4me1 = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$LogFC_H3K4me1,
+  Enhancer_type = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$Enhancer_type,
+  cat = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$cat,
+  gene_name = result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$gene_name
+
+)
+
+hits_D2_TKO_K4M_vs_D2_TKO_H3_dmr <- findOverlaps(gr_result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr, gr_result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr)
+
+scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr <- cbind(
+  as.data.frame(gr_result_D2_TKO_K4M_vs_D2_TKO_H3_MATAC_dmr)[queryHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_dmr), ],
+  LogFC_H3K4me1 = gr_result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$LogFC_H3K4me1[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_dmr)],
+  Enhancer_type = gr_result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$Enhancer_type[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_dmr)],
+  cat = gr_result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$cat[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_dmr)],
+  gene_name = gr_result_D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_dmr$gene_name[subjectHits(hits_D2_TKO_K4M_vs_D2_TKO_H3_dmr)]
+
+
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr)
+nrow(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr)
+```
+
+```{r}
+gr_result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr <- GRanges(
+  seqnames = result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr$seqnames,
+  ranges   = IRanges(start = result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr$start, end = result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr$end),
+  Fold_MATAC = result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr$Fold_MATAC,
+)
+
+gr_result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr <- GRanges(
+  seqnames = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$seqname,
+  ranges   = IRanges(start = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$start, end = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$end),
+  LogFC_H3K4me1 = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$LogFC_H3K4me1,
+  Enhancer_type = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$Enhancer_type,
+  cat = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$cat,
+  gene_name = result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$gene_name
+)
+
+hits_D2_WT_K4M_vs_D2_WT_H3_dmr <- findOverlaps(gr_result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr, gr_result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr)
+
+scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr <- cbind(
+  as.data.frame(gr_result_D2_WT_K4M_vs_D2_WT_H3_MATAC_dmr)[queryHits(hits_D2_WT_K4M_vs_D2_WT_H3_dmr), ],
+  LogFC_H3K4me1 = gr_result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$LogFC_H3K4me1[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_dmr)],
+  Enhancer_type = gr_result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$Enhancer_type[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_dmr)],
+  cat = gr_result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$cat[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_dmr)],
+  gene_name = gr_result_D2_WT_K4M_vs_D2_WT_H3_H3K4me1_dmr$gene_name[subjectHits(hits_D2_WT_K4M_vs_D2_WT_H3_dmr)]
+
+) %>%
+  distinct(seqnames, start, end, .keep_all = TRUE)
+head(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr)
+nrow(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr)
+```
+
+# Add RNA-seq results
+
+```{r}
+setwd("/Users/maxim/Documents/RNAseq_2i_to_EpiLC/RNAseq_data_Angelique")
+df_TKO_H3_D2_vs_WT_H3_D2  <- read.table("H3K4M_RNAseq_RPKM_without_dup_TKO.H3.D2_vs_WT.H3.D2.txt", header = TRUE)
+df_TKO_H3K4M_D2_vs_TKO_H3_D2 <- read.table("H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_TKO.H3.D2.txt", header = TRUE)
+df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 <- read.table("H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_WT.H3K4M.D2.txt", header = TRUE)
+df_WT_H3K4M_D2_vs_WT_H3_D2 <- read.table("H3K4M_RNAseq_RPKM_without_dup_WT.H3K4M.D2_vs_WT.H3.D2.txt", header = TRUE)
+```
+
+```{r}
+scatterplot_D2_TKO_H3_vs_H3_WT_dmr <- left_join(scatterplot_D2_TKO_H3_vs_H3_WT_dmr,df_TKO_H3_D2_vs_WT_H3_D2 %>% select(Gene, logFC_TKO.H3.D2_vs_WT.H3.D2,thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2), by = c("gene_name" = "Gene"))
+
+scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr <- left_join(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr,df_TKO_H3K4M_D2_vs_WT_H3K4M_D2 %>% select(Gene, logFC_TKO.H3K4M.D2_vs_WT.H3K4M.D2,thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2), by = c("gene_name" = "Gene"))
+
+scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr <- left_join(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr,df_TKO_H3K4M_D2_vs_TKO_H3_D2 %>% select(Gene, logFC_TKO.H3K4M.D2_vs_TKO.H3.D2,thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2), by = c("gene_name" = "Gene"))
+
+scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr <- left_join(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr,df_WT_H3K4M_D2_vs_WT_H3_D2 %>% select(Gene, logFC_WT.H3K4M.D2_vs_WT.H3.D2,thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2), by = c("gene_name" = "Gene"))
+```
+
+```{r}
+# replace "NaN" labels (genes not differentially expressed) by "n.s." (not significant)
+
+clean_NoDiff <- function(df, colname) {
+  df[[colname]][df[[colname]] == "NaN"] <- "n.s."
+  return(df)
+}
+```
+
+```{r}
+scatterplot_D2_TKO_H3_vs_H3_WT_dmr <- clean_NoDiff(scatterplot_D2_TKO_H3_vs_H3_WT_dmr, "thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2")
+
+scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr <- clean_NoDiff(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr, "thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2")
+
+scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr <- clean_NoDiff(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr, "thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2")
+
+scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr <- clean_NoDiff(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr, "thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2")
+
+```
+
+```{r}
+# Simplify the DEG status labels: remove everything after the first "_" so only "up", "down" or "n.s." remain
+
+scatterplot_D2_TKO_H3_vs_H3_WT_dmr$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2 <- str_replace(scatterplot_D2_TKO_H3_vs_H3_WT_dmr$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2,"_.+", "")
+
+scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2 <- str_replace(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2,"_.+", "" ) 
+
+scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2 <- str_replace(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2,"_.+", "" ) 
+
+scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2 <- str_replace(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2,"_.+", "" )
+```
+
+
+
+```{r}
+Plot_1 <- ggplot(scatterplot_D2_TKO_H3_vs_H3_WT_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = cat )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+Plot_1
+```
+
+```{r}
+#ggsave(filename = "plot/D2_TKO_H3_vs_H3_WT_H3K4me1_MATAC_enhancer_dmr.pdf", plot = Plot_1, device = "pdf", width = 8, height = 6)
+
+```
+
+```{r}
+ggplot(scatterplot_D2_TKO_H3_vs_H3_WT_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = Enhancer_type )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+```
+```{r}
+haut_gauche <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche", nrow(haut_gauche), "\n")
+cat("bas gauche", nrow(bas_gauche),"\n")
+cat("haut droite", nrow(haut_droite),"\n")
+cat("bas droite", nrow(bas_droite),"\n")
+```
+
+
+```{r}
+Plot_2 <- ggplot(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = cat )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+Plot_2
+```
+```{r}
+#ggsave(filename = "plot/D2_TKO_K4M_vs_K4M_WT_H3K4me1_MATAC_enhancer_dmr.pdf", plot = Plot_2, device = "pdf", width = 8, height = 6)
+
+```
+
+```{r}
+ggplot(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = Enhancer_type )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+```
+```{r}
+haut_gauche <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche", nrow(haut_gauche), "\n")
+cat("bas gauche", nrow(bas_gauche),"\n")
+cat("haut droite", nrow(haut_droite),"\n")
+cat("bas droite", nrow(bas_droite),"\n")
+```
+
+
+
+
+
+```{r}
+Plot_3 <- ggplot(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = cat )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+Plot_3
+```
+```{r}
+#ggsave(filename = "plot/D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1_MATAC_enhancer_dmr.pdf", plot = Plot_3, device = "pdf", width = 8, height = 6)
+
+```
+
+```{r}
+ggplot(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = Enhancer_type )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+```
+
+
+```{r}
+haut_gauche <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche", nrow(haut_gauche), "\n")
+cat("bas gauche", nrow(bas_gauche),"\n")
+cat("haut droite", nrow(haut_droite),"\n")
+cat("bas droite", nrow(bas_droite),"\n")
+```
+
+
+```{r}
+Plot_4 <- ggplot(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = cat )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+Plot_4
+```
+```{r}
+#ggsave(filename = "plot/D2_WT_K4M_vs_D2_WT_H3_H3K4me1_MATAC_enhancer_dmr.pdf", plot = Plot_4, device = "pdf", width = 8, height = 6)
+
+```
+
+```{r}
+ggplot(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr, aes(Fold_MATAC,LogFC_H3K4me1, colour = Enhancer_type )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  theme_minimal()
+```
+```{r}
+haut_gauche <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche", nrow(haut_gauche), "\n")
+cat("bas gauche", nrow(bas_gauche),"\n")
+cat("haut droite", nrow(haut_droite),"\n")
+cat("bas droite", nrow(bas_droite),"\n")
+```
+
+# Scatterplot up down cgi separated logFC RNA seq
+
+```{r}
+head(scatterplot_D2_TKO_H3_vs_H3_WT_dmr)
+```
+
+```{r}
+scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr %>% filter(cat =="up")
+p <- ggplot(scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_TKO.H3.D2_vs_WT.H3.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up.pdf",width = 8, height = 6)
+```
+
+
+
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche up", nrow(haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up), "\n")
+cat("bas gauche up", nrow(bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up),"\n")
+cat("haut droite up", nrow(haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up),"\n")
+cat("bas droite up", nrow(bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG <- haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG <- bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG <- haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG <- bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG up")
+table(haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+cat("bas gauche DEG up")
+ table(bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+cat("haut droite DEG up")
+table(haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+cat("bas droite DEG up")
+table(bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+```
+
+
+
+```{r}
+scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr %>% filter(cat =="down")
+p <- ggplot(scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_TKO.H3.D2_vs_WT.H3.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down.pdf",width = 8, height = 6)
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down <- scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche down", nrow(haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down), "\n")
+cat("bas gauche down", nrow(bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down),"\n")
+cat("haut droite down", nrow(haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down),"\n")
+cat("bas droite down", nrow(bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG <- haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG <- bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG <- haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG <- bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG down")
+table(haut_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+cat("bas gauche DEG down")
+ table(bas_gauche_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+cat("haut droite DEG down")
+table(haut_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+cat("bas droite DEG down")
+table(bas_droite_scatterplot_D2_TKO_H3_vs_H3_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3.D2_vs_WT.H3.D2)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr %>% filter(cat =="up")
+p <- ggplot(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_TKO.H3K4M.D2_vs_WT.H3K4M.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up.pdf",width = 8, height = 6)
+```
+
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche up", nrow(haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up), "\n")
+cat("bas gauche up", nrow(bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up),"\n")
+cat("haut droite up", nrow(haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up),"\n")
+cat("bas droite up", nrow(bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG <- haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG <- bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG <- haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG <- bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG up")
+table(haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+cat("bas gauche DEG up")
+ table(bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+cat("haut droite DEG up")
+table(haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+cat("bas droite DEG up")
+table(bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+```
+
+```{r}
+scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr %>% filter(cat =="down")
+p <- ggplot(scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_TKO.H3K4M.D2_vs_WT.H3K4M.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down.pdf",width = 8, height = 6)
+```
+
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down <- scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche down", nrow(haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down), "\n")
+cat("bas gauche down", nrow(bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down),"\n")
+cat("haut droite down", nrow(haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down),"\n")
+cat("bas droite down", nrow(bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG <- haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG <- bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG <- haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG <- bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG down")
+table(haut_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+cat("bas gauche DEG down")
+ table(bas_gauche_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+cat("haut droite DEG down")
+table(haut_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+cat("bas droite DEG down")
+table(bas_droite_scatterplot_D2_TKO_K4M_vs_K4M_WT_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_WT.H3K4M.D2)
+```
+
+```{r}
+scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr %>% filter(cat =="up")
+p <- ggplot(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_TKO.H3K4M.D2_vs_TKO.H3.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up.pdf",width = 8, height = 6)
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche up", nrow(haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up), "\n")
+cat("bas gauche up", nrow(bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up),"\n")
+cat("haut droite up", nrow(haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up),"\n")
+cat("bas droite up", nrow(bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG <- haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG <- bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG <- haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG <- bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG up")
+table(haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+cat("bas gauche DEG up")
+ table(bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+cat("haut droite DEG up")
+table(haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+cat("bas droite DEG up")
+table(bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_up_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+```
+
+```{r}
+scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr %>% filter(cat =="down")
+p <- ggplot(scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_TKO.H3K4M.D2_vs_TKO.H3.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down.pdf",width = 8, height = 6)
+```
+
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down <- scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche down", nrow(haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down), "\n")
+cat("bas gauche down", nrow(bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down),"\n")
+cat("haut droite down", nrow(haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down),"\n")
+cat("bas droite down", nrow(bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG <- haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG <- bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG <- haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG <- bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG down")
+table(haut_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+cat("bas gauche DEG down")
+ table(bas_gauche_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+cat("haut droite DEG down")
+table(haut_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+cat("bas droite DEG down")
+table(bas_droite_scatterplot_D2_TKO_K4M_vs_D2_TKO_H3_dmr_down_DEG$thresh_adjp005_fc1_TKO.H3K4M.D2_vs_TKO.H3.D2)
+```
+
+
+```{r}
+scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr %>% filter(cat =="up")
+p <- ggplot(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_WT.H3K4M.D2_vs_WT.H3.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up.pdf",width = 8, height = 6)
+```
+
+```{r}
+haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche up", nrow(haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up), "\n")
+cat("bas gauche up", nrow(bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up),"\n")
+cat("haut droite up", nrow(haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up),"\n")
+cat("bas droite up", nrow(bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG <- haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG <- bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG <- haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG <- bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG up")
+table(haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+cat("bas gauche DEG up")
+ table(bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+cat("haut droite DEG up")
+table(haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+cat("bas droite DEG up")
+table(bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_up_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+```
+```{r}
+scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr %>% filter(cat =="down")
+p <- ggplot(scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down, aes(Fold_MATAC,LogFC_H3K4me1, colour = logFC_WT.H3K4M.D2_vs_WT.H3.D2 )) +
+  geom_point(alpha = 0.5)+
+  geom_vline(xintercept = 0)+
+  geom_hline(yintercept = 0)+
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+```
+```{r}
+p+
+pdf("/Users/maxim/Documents/Marlet/Scripts/plot_H3K4me1_enhancer_dmr_RNA/scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down.pdf",width = 8, height = 6)
+```
+
+
+```{r}
+haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC < 0)
+bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC < 0)
+haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>% filter(LogFC_H3K4me1 > 0 & Fold_MATAC > 0)
+bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down <- scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>% filter(LogFC_H3K4me1 < 0 & Fold_MATAC > 0)
+cat("haut gauche down", nrow(haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down), "\n")
+cat("bas gauche down", nrow(bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down),"\n")
+cat("haut droite down", nrow(haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down),"\n")
+cat("bas droite down", nrow(bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down),"\n")
+```
+
+```{r}
+haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG <- haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG <- bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG <- haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG <- bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down %>%  distinct(gene_name, .keep_all = TRUE)
+cat("haut gauche DEG down")
+table(haut_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+cat("bas gauche DEG down")
+ table(bas_gauche_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+cat("haut droite DEG down")
+table(haut_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+cat("bas droite DEG down")
+table(bas_droite_scatterplot_D2_WT_K4M_vs_D2_WT_H3_dmr_down_DEG$thresh_adjp005_fc1_WT.H3K4M.D2_vs_WT.H3.D2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

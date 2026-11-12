@@ -1,0 +1,789 @@
+---
+title: "Figure 5: ATAC vs Histone at enhancers, colored by RNA-seq"
+date: "2026-09-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/user/Dropbox/Greenberg Lab Sharing/People/Narjesse Hounani/")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(GenomicRanges)
+```
+
+Edit 2026.09.07: Print number of non-significant (NS) genes.
+
+Edit 2026.09.15: v2 - Print number of DEGs, not number of enhancers associated with DEGs
+
+Goal : Visualize the relationship at enhancer between H3K4me1, H3K27me3 and the accessibility combined with the gene expression 
+
+# Read global information
+
+## Enhancers
+
+```{r enhancers}
+Enhancer <- read.table("MethyLasso_Angelique_v2/WT_Master_Enhancer_Peakome_v6_annotated_TargetGene.txt", header = TRUE, sep = "\t")
+Enhancer <- Enhancer %>% filter(D2_class != "othr")
+Enhancer <- Enhancer %>% filter(gene_symbol != "")
+
+gr_Enhancer <- GRanges(
+  seqnames = Enhancer$chr,
+  ranges   = IRanges(start = Enhancer$start, end = Enhancer$end),
+  Enhancer_type = Enhancer$D2_class,
+  Gene = Enhancer$gene_symbol)
+```
+
+
+# Functions
+
+## ATAC ∩ Histone
+
+```{r fn-overlap-atac-mark2}
+get_overlap_atac_mark2 <- function(ATAC, mark2, mark2_name) {
+  logfc_col <- paste0("LogFC_", mark2_name)
+  
+  gr_ATAC <- GRanges(
+    seqnames = ATAC$seqnames,
+    ranges   = IRanges(start = ATAC$start, end = ATAC$end),
+    LogFC_ATAC = ATAC$LogFC_ATAC,
+    direction = ATAC$direction)
+  
+  gr_mark2 <- GRanges(
+    seqnames = mark2$seqname,
+    ranges   = IRanges(start = mark2$start, end = mark2$end))
+  mcols(gr_mark2) <- setNames(data.frame(mark2[[logfc_col]], mark2$direction),
+                              c(logfc_col, "direction"))
+  
+  hits          <- findOverlaps(gr_ATAC, gr_mark2)
+  
+  overlaps      <- pintersect(gr_ATAC[queryHits(hits)], gr_mark2[subjectHits(hits)])
+  overlap_width <- width(overlaps)
+  frac_ATAC     <- overlap_width / width(gr_ATAC)[queryHits(hits)]
+  frac_mark2    <- overlap_width / width(gr_mark2)[subjectHits(hits)]
+  
+  df_ATAC <- as.data.frame(gr_ATAC)[queryHits(hits), ] %>%
+    dplyr::rename_with(~ paste0(.x, ".ATAC"), .cols = c(seqnames, start, end, width, strand, direction))
+  
+  df_mark2 <- as.data.frame(gr_mark2)[subjectHits(hits), ] %>%
+    dplyr::rename_with(~ paste0(.x, ".", mark2_name), .cols = c(seqnames, start, end, width, strand, direction))
+  
+  frac_mark2_col <- paste0("frac_", mark2_name)
+  result <- cbind(df_ATAC,
+                  df_mark2,
+                  setNames(data.frame(overlap_width, frac_ATAC, frac_mark2),
+                           c("overlap_width", "frac_ATAC", frac_mark2_col)))
+  
+  seqnames_mark2_col <- paste0("seqnames.", mark2_name)
+  start_mark2_col    <- paste0("start.", mark2_name)
+  end_mark2_col      <- paste0("end.", mark2_name)
+  
+  result <- result %>%
+    group_by(seqnames.ATAC, start.ATAC, end.ATAC) %>%
+    filter(frac_ATAC == max(frac_ATAC)) %>% ## Keep highest coverage of ATAC peak
+    ungroup()
+  
+  direction_mark2_col <- paste0("direction.", mark2_name)
+  result <- result %>% mutate(direction.both = case_when(
+    .data[[direction_mark2_col]] != "none" & direction.ATAC != "none" ~ "Both",
+    .data[[direction_mark2_col]] != "none" & direction.ATAC == "none" ~ mark2_name,
+    .data[[direction_mark2_col]] == "none" & direction.ATAC != "none" ~ "ATAC",
+    TRUE                                                                  ~ "None"),
+    direction.both = factor(direction.both, levels = c("ATAC", mark2_name, "Both", "None")))
+  
+  result
+}
+```
+
+## ATAC&Histone ∩ Enhancer
+
+```{r fn-overlap-mark2-enhancer}
+get_overlap_mark2_enhancer <- function(overlap_result, mark2_name) {
+  seqnames_mark2_col <- paste0("seqnames.", mark2_name)
+  start_mark2_col    <- paste0("start.", mark2_name)
+  end_mark2_col      <- paste0("end.", mark2_name)
+  
+  gr.ATAC <- GRanges(seqnames = overlap_result$seqnames.ATAC,
+                     ranges   = IRanges(start = overlap_result$start.ATAC, end = overlap_result$end.ATAC))
+  mcols(gr.ATAC) <- overlap_result
+  
+  ## This function uses the coordinates of the mark2 peak as anchor
+  gr.ATAC.mark2 <- GRanges(seqnames = overlap_result[[seqnames_mark2_col]],
+                           ranges   = IRanges(start = overlap_result[[start_mark2_col]], end = overlap_result[[end_mark2_col]]))
+  
+  hits <- findOverlaps(gr.ATAC, gr_Enhancer)
+  
+  overlaps_enhancer      <- pintersect(gr.ATAC[queryHits(hits)], gr_Enhancer[subjectHits(hits)])
+  overlap_width_enhancer <- width(overlaps_enhancer)
+  frac_enhancer          <- overlap_width_enhancer/width(gr_Enhancer)[subjectHits(hits)]
+  
+  ## Ensure the enhancer overlaps with the mark2 peak
+  overlaps_mark2_enhancer      <- pintersect(gr.ATAC.mark2[queryHits(hits)], gr_Enhancer[subjectHits(hits)])
+  overlap_width_mark2_enhancer <- width(overlaps_mark2_enhancer)
+  frac_mark2_enhancer          <- overlap_width_mark2_enhancer/width(gr_Enhancer)[subjectHits(hits)]
+  
+  result <- cbind(
+    as.data.frame(gr.ATAC)[queryHits(hits),],
+    as.data.frame(gr_Enhancer)[subjectHits(hits),] %>%
+      dplyr::select(seqnames.Enh = seqnames, start.Enh = start, end.Enh = end, Enhancer_type, Gene),
+    overlap_width_enhancer = overlap_width_enhancer,
+    frac_enhancer = frac_enhancer,
+    overlap_width_mark2_enhancer = overlap_width_mark2_enhancer,
+    frac_mark2_enhancer = frac_mark2_enhancer)
+  
+  result <- result %>%
+    filter(overlap_width_mark2_enhancer > 0) %>%
+    group_by(seqnames, start, end) %>% ## gr_ATAC
+    filter(frac_enhancer == max(frac_enhancer)) %>% ## Keep the enhancer with the maximum overlap
+    filter(frac_mark2_enhancer == max(frac_mark2_enhancer)) %>%
+    ungroup()
+  
+  result
+}
+```
+
+## Print number of dots per quadrant
+
+```{r fn-quadrants}
+quadrants <- function(data, x.axis, y.axis) {
+  result <- data %>%
+    filter({{ x.axis }} != 0, {{ y.axis }} != 0) %>%
+    mutate(result = case_when(
+      {{ x.axis }} < 0 & {{ y.axis }} > 0 ~ "haut gauche",
+      {{ x.axis }} < 0 & {{ y.axis }} < 0 ~ "bas gauche",
+      {{ x.axis }} > 0 & {{ y.axis }} > 0 ~ "haut droite",
+      {{ x.axis }} > 0 & {{ y.axis }} < 0 ~ "bas droite"),
+      result = factor(result, levels = c("haut gauche", "bas gauche", "haut droite", "bas droite"))) %>%
+    count(result) %>%
+    mutate(proportion = round(n / sum(n) * 100, 2))
+  
+  result
+}
+```
+
+## Count up-/down-regulated genes per quadrant
+
+```{r fn-quadrants-rna}
+quadrants_RNA <- function(data, x.axis, y.axis, direction) {
+  Gene_quad <- data %>%
+    filter({{ x.axis }} != 0, {{ y.axis }} != 0) %>%
+    #filter({{ direction }} %in% c("UP", "DOWN")) %>%   ## keep DE genes only (drop "NS")
+    mutate(
+      result = case_when(
+        {{ x.axis }} < 0 & {{ y.axis }} > 0 ~ "haut gauche",
+        {{ x.axis }} < 0 & {{ y.axis }} < 0 ~ "bas gauche",
+        {{ x.axis }} > 0 & {{ y.axis }} > 0 ~ "haut droite",
+        {{ x.axis }} > 0 & {{ y.axis }} < 0 ~ "bas droite"),
+      result = factor(result, levels = c("haut gauche", "bas gauche", "haut droite", "bas droite")),
+      {{ direction }} := factor({{ direction }}, levels = c("NS", "UP", "DOWN"))) %>%
+    select(Gene, {{ direction }}, result) %>% distinct() %>% ## Remove enhancers/promoters with the same quadrant and target gene
+    count(result, {{ direction }}, .drop = FALSE) %>%   ## number of NS / UP / DOWN genes per quadrant
+    tidyr::pivot_wider(names_from = {{ direction }}, values_from = n, values_fill = 0)   ## one row per quadrant, columns NS / UP / DOWN
+  
+  Gene_quad
+}
+```
+
+\
+
+# WT_K4M vs WT_H3
+
+## Read tables of histone marks
+
+### MATAC
+
+```{r wt-k4m-h3-matac}
+df_MATAC_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_logFCH3K27me3-MATAC/diff_peaks_D2_WT_K4M_vs_D2_WT_H3_MATAC.tsv", header = TRUE, sep = '\t')
+## Mark DE
+df_MATAC_all <- dplyr::rename(df_MATAC_all, LogFC_ATAC = Fold)
+df_MATAC_all <- df_MATAC_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_ATAC > 1  ~ "up",
+  FDR < 0.05 & LogFC_ATAC < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_MATAC_all$direction)
+```
+
+### H3K4me1
+
+```{r wt-k4m-h3-h3k4me1}
+df_H3K4me1_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me1/D2_WT_K4M_vs_D2_WT_H3_H3K4me1.bed", header = TRUE, sep = "\t")
+df_H3K4me1_all <- dplyr::rename(df_H3K4me1_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me1 = Fold)
+## Check contrast (most should lose H3K4me1)
+sum(df_H3K4me1_all$LogFC_H3K4me1 > 0)
+sum(df_H3K4me1_all$LogFC_H3K4me1 < 0)
+## Mark DE
+df_H3K4me1_all <- df_H3K4me1_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me1 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me1 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me1_all$direction)
+```
+
+
+### H3K27me3
+
+```{r wt-k4m-h3-h3k27me3}
+df_H3K27me3_all <- read.table("Marlet/Results/H3K27me3/D2_WT_H3_vs_D2_WT_K4M_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start = as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end = as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+Order of comparisons:
+
+- ATAC + H3K4me1 + enhancers
+
+- ATAC + H3K27me3 + enhancers
+
+\
+
+## Combine ATAC with H3K4me1, H3K4me3, or H3K27me3
+
+```{r wt-k4m-h3-combine-histone}
+result_ATAC_K4me1 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                            mark2 = df_H3K4me1_all,
+                                            mark2_name = "H3K4me1")
+result_ATAC_K27me3 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                             mark2 = df_H3K27me3_all,
+                                             mark2_name = "H3K27me3")
+
+```
+
+## Combine ATAC&Histone with Enhancer
+
+```{r wt-k4m-h3-combine-EP}
+## Enhancer
+result_ATAC_K4me1_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K4me1, mark2_name = "H3K4me1")
+result_ATAC_K27me3_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K27me3, mark2_name = "H3K27me3")
+
+rm(result_ATAC_K4me1, result_ATAC_K27me3)
+```
+
+## Import limma results and merge
+
+```{r wt-k4m-h3-rna}
+df_RNA <- read.table("RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_WT.H3K4M.D2_vs_WT.H3.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC, direction.RNA = thresh_adjp005_fc1)
+## Clean DE tags
+df_RNA$direction.RNA <- str_remove(df_RNA$direction.RNA, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA$direction.RNA <- gsub(pattern = "NaN", replacement = "NS", x = df_RNA$direction.RNA)
+## Add RNAseq information; drop non-quantified genes
+
+## -- Enhancers
+result_ATAC_K4me1_Enh <- result_ATAC_K4me1_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+
+result_ATAC_K27me3_Enh <- result_ATAC_K27me3_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+\
+
+## Plots
+
+### Enhancers: ATAC vs H3K4me1
+
+```{r wt-k4m-h3-plot-k4me1-enhancer}
+p <- ggplot(result_ATAC_K4me1_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K4me1, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_WT_K4M_vs_D2_WT_H3_ATAC_H3K4me1_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r wt-k4m-h3-plot-k4me1-enhancer-quadrants}
+quadrants(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1)
+quadrants_RNA(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1, direction = direction.RNA)
+```
+
+### Enhancers: ATAC vs H3K27me3
+
+```{r wt-k4m-h3-plot-k27me3-enhancer}
+p <- ggplot(result_ATAC_K27me3_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K27me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_WT_K4M_vs_D2_WT_H3_ATAC_H3K27me3_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r wt-k4m-h3-plot-k27me3-enhancer-quadrants}
+quadrants(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3)
+quadrants_RNA(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3, direction = direction.RNA)
+```
+
+
+\
+
+# TKO_K4M vs TKO_H3
+
+## Read tables of histone marks
+
+### MATAC
+
+```{r tko-k4m-h3-matac}
+df_MATAC_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_logFCH3K27me3-MATAC/diff_peaks_D2_TKO_K4M_vs_D2_TKO_H3_MATAC.tsv", header = TRUE, sep = '\t')
+## Mark DE
+df_MATAC_all <- dplyr::rename(df_MATAC_all, LogFC_ATAC = Fold)
+df_MATAC_all <- df_MATAC_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_ATAC > 1  ~ "up",
+  FDR < 0.05 & LogFC_ATAC < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_MATAC_all$direction)
+```
+
+### H3K4me1
+
+```{r tko-k4m-h3-h3k4me1}
+df_H3K4me1_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me1/D2_TKO_K4M_vs_D2_TKO_H3_H3K4me1.bed", header = TRUE, sep = "\t")
+df_H3K4me1_all <- dplyr::rename(df_H3K4me1_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me1 = Fold)
+## Check contrast (most should lose H3K4me1)
+sum(df_H3K4me1_all$LogFC_H3K4me1 > 0)
+sum(df_H3K4me1_all$LogFC_H3K4me1 < 0)
+## Mark DE
+df_H3K4me1_all <- df_H3K4me1_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me1 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me1 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me1_all$direction)
+```
+
+
+### H3K27me3
+
+```{r tko-k4m-h3-h3k27me3}
+df_H3K27me3_all <- read.table("Marlet/Results/H3K27me3/D2_TKO_H3_vs_D2_TKO_K4M_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start = as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end = as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+\
+
+## Combine ATAC with H3K4me1, H3K4me3, or H3K27me3
+
+```{r tko-k4m-h3-combine-histone}
+result_ATAC_K4me1 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                            mark2 = df_H3K4me1_all,
+                                            mark2_name = "H3K4me1")
+result_ATAC_K27me3 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                             mark2 = df_H3K27me3_all,
+                                             mark2_name = "H3K27me3")
+```
+
+## Combine ATAC&Histone with Enhancer/Promoter
+
+```{r tko-k4m-h3-combine-EP}
+## Enhancer
+result_ATAC_K4me1_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K4me1, mark2_name = "H3K4me1")
+result_ATAC_K27me3_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K27me3, mark2_name = "H3K27me3")
+
+rm(result_ATAC_K4me1, result_ATAC_K27me3)
+```
+
+## Import limma results and merge
+
+```{r tko-k4m-h3-rna}
+df_RNA <- read.table("RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_TKO.H3.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC, direction.RNA = thresh_adjp005_fc1)
+## Clean DE tags
+df_RNA$direction.RNA <- str_remove(df_RNA$direction.RNA, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA$direction.RNA <- gsub(pattern = "NaN", replacement = "NS", x = df_RNA$direction.RNA)
+## Add RNAseq information; drop non-quantified genes
+
+## -- Enhancers
+result_ATAC_K4me1_Enh <- result_ATAC_K4me1_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+
+result_ATAC_K27me3_Enh <- result_ATAC_K27me3_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+\
+
+## Plots
+
+### Enhancers: ATAC vs H3K4me1
+
+```{r tko-k4m-h3-plot-k4me1-enhancer}
+p <- ggplot(result_ATAC_K4me1_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K4me1, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_TKO_H3_ATAC_H3K4me1_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r tko-k4m-h3-plot-k4me1-enhancer-quadrants}
+quadrants(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1)
+quadrants_RNA(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1, direction = direction.RNA)
+```
+
+### Enhancers: ATAC vs H3K27me3
+
+```{r tko-k4m-h3-plot-k27me3-enhancer}
+p <- ggplot(result_ATAC_K27me3_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K27me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_TKO_H3_ATAC_H3K27me3_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r tko-k4m-h3-plot-k27me3-enhancer-quadrants}
+quadrants(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3)
+quadrants_RNA(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3, direction = direction.RNA)
+```
+
+
+\
+
+# TKO_H3 vs WT_H3
+
+## Read tables of histone marks
+
+### MATAC
+
+```{r tko-h3-wt-h3-matac}
+df_MATAC_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_logFCH3K27me3-MATAC/diff_peaks_D2_WT_H3_vs_D2_TKO_H3_MATAC.tsv", header = TRUE, sep = '\t')
+df_MATAC_all <- dplyr::rename(df_MATAC_all, LogFC_ATAC = Fold)
+## Source file is WT_vs_TKO; flip sign so the ATAC axis reads TKO_vs_WT (matches section title and RNA)
+df_MATAC_all$LogFC_ATAC <- -df_MATAC_all$LogFC_ATAC
+## Mark DE
+df_MATAC_all <- df_MATAC_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_ATAC > 1  ~ "up",
+  FDR < 0.05 & LogFC_ATAC < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_MATAC_all$direction)
+```
+
+### H3K4me1
+
+```{r tko-h3-wt-h3-h3k4me1}
+df_H3K4me1_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me1/D2_WT_H3_vs_D2_TKO_H3_H3K4me1.bed", header = TRUE, sep = "\t")
+df_H3K4me1_all <- dplyr::rename(df_H3K4me1_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me1 = Fold)
+## Contrast is already TKO_vs_WT (Conc_D2_TKO_H3 listed first) -> no flip needed
+sum(df_H3K4me1_all$LogFC_H3K4me1 > 0)
+sum(df_H3K4me1_all$LogFC_H3K4me1 < 0)
+## Mark DE
+df_H3K4me1_all <- df_H3K4me1_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me1 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me1 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me1_all$direction)
+```
+
+
+
+### H3K27me3
+
+```{r tko-h3-wt-h3-h3k27me3}
+df_H3K27me3_all <- read.table("Marlet/Results/H3K27me3/D2_WT_H3_vs_D2_TKO_H3_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start = as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end = as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+\
+
+## Combine ATAC with H3K4me1 or H3K27me3
+
+```{r tko-h3-wt-h3-combine-histone}
+result_ATAC_K4me1 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                            mark2 = df_H3K4me1_all,
+                                            mark2_name = "H3K4me1")
+result_ATAC_K27me3 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                             mark2 = df_H3K27me3_all,
+                                             mark2_name = "H3K27me3")
+```
+
+## Combine ATAC&Histone with Enhancer/Promoter
+
+```{r tko-h3-wt-h3-combine-EP}
+## Enhancer
+result_ATAC_K4me1_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K4me1, mark2_name = "H3K4me1")
+result_ATAC_K27me3_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K27me3, mark2_name = "H3K27me3")
+
+
+rm(result_ATAC_K4me1, result_ATAC_K27me3)
+```
+
+## Import limma results and merge
+
+```{r tko-h3-wt-h3-rna}
+df_RNA <- read.table("RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_TKO.H3.D2_vs_WT.H3.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC, direction.RNA = thresh_adjp005_fc1)
+## Clean DE tags
+df_RNA$direction.RNA <- str_remove(df_RNA$direction.RNA, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA$direction.RNA <- gsub(pattern = "NaN", replacement = "NS", x = df_RNA$direction.RNA)
+## Add RNAseq information; drop non-quantified genes
+
+## -- Enhancers
+result_ATAC_K4me1_Enh <- result_ATAC_K4me1_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+
+result_ATAC_K27me3_Enh <- result_ATAC_K27me3_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+```
+
+\
+
+## Plots
+
+### Enhancers: ATAC vs H3K4me1
+
+```{r tko-h3-wt-h3-plot-k4me1-enhancer}
+p <- ggplot(result_ATAC_K4me1_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K4me1, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_TKO_H3_vs_D2_WT_H3_ATAC_H3K4me1_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r tko-h3-wt-h3-plot-k4me1-enhancer-quadrants}
+quadrants(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1)
+quadrants_RNA(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1, direction = direction.RNA)
+```
+
+### Enhancers: ATAC vs H3K27me3
+
+```{r tko-h3-wt-h3-plot-k27me3-enhancer}
+p <- ggplot(result_ATAC_K27me3_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K27me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_TKO_H3_vs_D2_WT_H3_ATAC_H3K27me3_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r tko-h3-wt-h3-plot-k27me3-enhancer-quadrants}
+quadrants(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3)
+quadrants_RNA(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3, direction = direction.RNA)
+```
+
+\
+
+# TKO_K4M vs WT_K4M
+
+## Read tables of histone marks
+
+### MATAC
+
+```{r tko-k4m-wt-k4m-matac}
+## NB: despite the .csv extension this file is tab-separated (annotated DiffBind output).
+## quote = "" is required: gene-name/annotation columns contain apostrophes that would
+## otherwise be read as quote characters and produce ragged rows.
+df_MATAC_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_logFCH3K27me3-MATAC/D2_WT_K4M_vs_D2_TKO_K4M_MATAC.csv", header = TRUE, sep = '\t', quote = "", fill = TRUE)
+df_MATAC_all <- dplyr::rename(df_MATAC_all, LogFC_ATAC = Fold)
+## Source file is WT_vs_TKO; flip sign so the ATAC axis reads TKO_vs_WT (matches section title and RNA)
+df_MATAC_all$LogFC_ATAC <- -df_MATAC_all$LogFC_ATAC
+## Mark DE
+df_MATAC_all <- df_MATAC_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_ATAC > 1  ~ "up",
+  FDR < 0.05 & LogFC_ATAC < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_MATAC_all$direction)
+```
+
+### H3K4me1
+
+```{r tko-k4m-wt-k4m-h3k4me1}
+df_H3K4me1_all <- read.table("MATAC_analysis/DiffBind_result/scatterplot_H3K27me3_H3K4me1/D2_WT_K4M_vs_D2_TKO_K4M_H3K4me1.bed", header = TRUE, sep = "\t")
+df_H3K4me1_all <- dplyr::rename(df_H3K4me1_all, seqname = Chr, start = Start, end = End, LogFC_H3K4me1 = Fold)
+## Contrast is already TKO_vs_WT (Conc_D2_TKO_K4M listed first) -> no flip needed
+sum(df_H3K4me1_all$LogFC_H3K4me1 > 0)
+sum(df_H3K4me1_all$LogFC_H3K4me1 < 0)
+## Mark DE
+df_H3K4me1_all <- df_H3K4me1_all %>% mutate(direction = case_when(
+  FDR < 0.05 & LogFC_H3K4me1 > 1  ~ "up",
+  FDR < 0.05 & LogFC_H3K4me1 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K4me1_all$direction)
+```
+
+
+### H3K27me3
+
+```{r tko-k4m-wt-k4m-h3k27me3}
+df_H3K27me3_all <- read.table("Marlet/Results/H3K27me3/D2_WT_K4M_vs_D2_TKO_K4M_H3K27me3_spikeIn.txt", header = TRUE, sep = '\t')
+## Mark DE
+df_H3K27me3_all <- dplyr::rename(df_H3K27me3_all, LogFC_H3K27me3 = log2FoldChange)
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(direction = case_when(
+  padj < 0.05 & LogFC_H3K27me3 > 1  ~ "up",
+  padj < 0.05 & LogFC_H3K27me3 < -1 ~ "down",
+  TRUE                            ~ "none"))
+table(df_H3K27me3_all$direction)
+## Extract coordinates
+df_H3K27me3_all <- df_H3K27me3_all %>% mutate(
+  seqname = str_extract(coord, "^[^:]+"),
+  start = as.integer(str_extract(coord, "(?<=:)\\d+")),
+  end = as.integer(str_extract(coord,"(?<=-)[\\d]+$")))
+```
+
+\
+
+## Combine ATAC with H3K4me1 or H3K27me3
+
+```{r tko-k4m-wt-k4m-combine-histone}
+result_ATAC_K4me1 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                            mark2 = df_H3K4me1_all,
+                                            mark2_name = "H3K4me1")
+
+result_ATAC_K27me3 <- get_overlap_atac_mark2(ATAC = df_MATAC_all,
+                                             mark2 = df_H3K27me3_all,
+                                             mark2_name = "H3K27me3")
+```
+
+## Combine ATAC&Histone with Enhancer/Promoter
+
+```{r tko-k4m-wt-k4m-combine-EP}
+## Enhancer
+result_ATAC_K4me1_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K4me1, mark2_name = "H3K4me1")
+result_ATAC_K27me3_Enh <- get_overlap_mark2_enhancer(overlap_result = result_ATAC_K27me3, mark2_name = "H3K27me3")
+
+rm(result_ATAC_K4me1,result_ATAC_K27me3)
+```
+
+## Import limma results and merge
+
+```{r tko-k4m-wt-k4m-rna}
+df_RNA <- read.table("RNAseq_2i_to_EpiLC/RNAseq_data_Angelique/H3K4M_RNAseq_RPKM_without_dup_TKO.H3K4M.D2_vs_WT.H3K4M.D2.txt", header = TRUE)
+## Clean table (remove condition tags)
+colnames(df_RNA) <- str_remove(colnames(df_RNA), "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA <- df_RNA %>% dplyr::rename(LogFC_RNA = logFC, direction.RNA = thresh_adjp005_fc1)
+## Clean DE tags
+df_RNA$direction.RNA <- str_remove(df_RNA$direction.RNA, "_[[:alnum:].]+_vs_[[:alnum:].]+$")
+df_RNA$direction.RNA <- gsub(pattern = "NaN", replacement = "NS", x = df_RNA$direction.RNA)
+## Add RNAseq information; drop non-quantified genes
+
+## -- Enhancers
+result_ATAC_K4me1_Enh <- result_ATAC_K4me1_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA))
+
+result_ATAC_K27me3_Enh <- result_ATAC_K27me3_Enh %>%
+  left_join(df_RNA, by = "Gene") %>%
+  filter(!is.na(LogFC_RNA)) 
+```
+
+\
+
+## Plots
+
+### Enhancers: ATAC vs H3K4me1
+
+```{r tko-k4m-wt-k4m-plot-k4me1-enhancer}
+p <- ggplot(result_ATAC_K4me1_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K4me1, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_WT_K4M_ATAC_H3K4me1_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r tko-k4m-wt-k4m-plot-k4me1-enhancer-quadrants}
+quadrants(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1)
+quadrants_RNA(data = result_ATAC_K4me1_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K4me1, direction = direction.RNA)
+```
+
+### Enhancers: ATAC vs H3K27me3
+
+```{r tko-k4m-wt-k4m-plot-k27me3-enhancer}
+p <- ggplot(result_ATAC_K27me3_Enh, aes(x = LogFC_ATAC, y = LogFC_H3K27me3, colour = LogFC_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  scale_colour_gradient2(low = ("blue"),  high = ("red"), mid = "grey80", limits = c(-2, 2), oob = scales::squish) +
+  theme_minimal()
+p
+## Export
+# ggsave(filename = "D2_TKO_K4M_vs_D2_WT_K4M_ATAC_H3K27me3_enhancer_RNA.pdf",
+#        path = "Marlet/Plots/RNA_MATAC/Enhancers/",
+#        plot = p, device = "pdf", width = 8, height = 6)
+```
+
+```{r tko-k4m-wt-k4m-plot-k27me3-enhancer-quadrants}
+quadrants(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3)
+quadrants_RNA(data = result_ATAC_K27me3_Enh, x.axis = LogFC_ATAC, y.axis = LogFC_H3K27me3, direction = direction.RNA)
+```
+

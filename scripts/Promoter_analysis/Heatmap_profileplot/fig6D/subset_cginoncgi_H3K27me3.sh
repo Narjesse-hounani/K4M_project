@@ -1,0 +1,3 @@
+#!/bin/sh
+computeMatrixOperations subset -m computematrix_heatmap_all_cginoncgi_allgeno_H3K27me3_v2.gz -o D0_computematrix_heatmap_all_cginoncgi_allgeno_H3K27me3_v2.gz --samples D0_TKO_H3 D0_TKO_K4M D0_WT_H3 D0_WT_K4M
+computeMatrixOperations subset -m computematrix_heatmap_all_cginoncgi_allgeno_H3K27me3_v2.gz -o D2_computematrix_heatmap_all_cginoncgi_allgeno_H3K27me3_v2.gz --samples D2_TKO_H3 D2_TKO_K4M D2_WT_H3 D2_WT_K4M

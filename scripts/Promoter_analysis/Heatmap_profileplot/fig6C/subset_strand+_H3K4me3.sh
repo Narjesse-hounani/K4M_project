@@ -1,0 +1,3 @@
+#!/bin/sh
+computeMatrixOperations subset -m computematrix_heatmap_TSS_TES_allgeno_D0D2_H3K4me3.gz -o D0_computematrix_heatmap_TSS_TES_H3K4me3.gz --samples D0_TKO_H3 D0_TKO_K4M D0_WT_H3 D0_WT_K4M
+computeMatrixOperations subset -m computematrix_heatmap_TSS_TES_allgeno_D0D2_H3K4me3.gz -o D2_computematrix_heatmap_TSS_TES_H3K4me3.gz --samples D2_TKO_H3 D2_TKO_K4M D2_WT_H3 D2_WT_K4M
